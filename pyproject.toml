@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbit"
+version = "0.1.0"
+description = "General computer-use agent."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "google-adk>=1.25.0",
+    "google-genai>=1.64.0",
+    "python-dotenv>=1.0",
+    "pyautogui>=0.9.54",
+    "pyperclip>=1.11.0",
+    "requests>=2.28",
+    "pdfplumber>=0.11.9",
+    "send2trash",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["orbit*"]
+
+[tool.setuptools.package-data]
+orbit = ["_bin/*"]

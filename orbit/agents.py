@@ -1,0 +1,173 @@
+from google.adk.agents import Agent
+from google.genai import types
+
+from google.adk.planners.built_in_planner import BuiltInPlanner
+from google.adk.tools import AgentTool
+from google.adk.agents.readonly_context import ReadonlyContext
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.llm_request import LlmRequest
+
+
+from .prompts import SYSTEM_PROMPT, FALLBACK_SYSTEM_PROMPT, PARENT_SYSTEM_PROMPT
+from ._tools.ui import (
+    list_active_windows,
+    manage_window,
+    find_ui_elements,
+    get_window_tree,
+    interact_with_element,
+    wait_for_element,
+    navigate_to_url,
+    launch_and_get_pid,
+    mouse_click,
+    mouse_type,
+    take_screenshot,
+    scroll_page,
+    get_form_fields,
+    select_dropdown_option,
+    select_option_by_label,
+)
+from ._tools.clipboard import (
+    clipboard_get,
+    clipboard_set,
+)
+from ._tools.filesystem import (
+    get_system_info,
+    read_file,
+    write_file,     
+    append_to_file,
+    read_pdf,
+    read_csv,
+    write_csv,
+    list_directory,
+    search_files,
+    file_exists,
+    get_file_info,
+    copy_file,
+    move_file,
+    delete_file,
+    create_directory,
+    find_in_file,
+    upload_file,
+)
+from ._tools.hotkey import press_hotkey
+
+async def inject_screenshot_callback(
+    callback_context: CallbackContext,
+    llm_request: LlmRequest
+) -> None:
+    """
+    Finds screenshot artifacts in tool responses and injects
+    them as inline images so the model can actually see them.
+    """
+    for content in llm_request.contents:
+        if not content.parts:
+            continue
+        for part in content.parts:
+            if (hasattr(part, "function_response") and
+                part.function_response and
+                part.function_response.name == "take_screenshot"):
+                
+                response = part.function_response.response
+                if response.get("status") == "success":
+                    # Load the artifact
+                    artifact = await callback_context.load_artifact("screenshot.jpg")
+                    if artifact and artifact.inline_data:
+                        # Inject image into model context
+                        llm_request.contents.append(
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part(
+                                        inline_data=types.Blob(
+                                            mime_type="image/jpeg",
+                                            data=artifact.inline_data.data
+                                        )
+                                    ),
+                                    types.Part(text="This is the current screenshot. Use mouse_click(x, y) to interact with what you see.")
+                                ]
+                            )
+                        )
+    return None
+
+
+_model_args = types.ThinkingConfig(thinking_budget=-1)
+_planner = BuiltInPlanner(thinking_config=_model_args)
+
+def system_prompt_provider(context: ReadonlyContext) -> str:
+    return SYSTEM_PROMPT
+
+def fallback_prompt_provider(context: ReadonlyContext) -> str:
+    return FALLBACK_SYSTEM_PROMPT
+
+
+def parent_prompt_provider(context: ReadonlyContext) -> str:
+    return PARENT_SYSTEM_PROMPT
+
+
+fallback_agent = Agent(
+    model="gemini-3-pro-preview",
+    name="fallback_vision_agent",
+    instruction=fallback_prompt_provider,
+    before_model_callback=inject_screenshot_callback,
+    tools=[
+        take_screenshot,
+        mouse_click,
+        mouse_type,
+        press_hotkey,
+    ],
+)
+desktop_agent = Agent(
+    model="gemini-3-pro-preview",
+    name="desktop_agent",
+    description="""Handles all desktop UI automation: browser control, forms, dropdowns, 
+    file uploads, job applications (LinkedIn Easy Apply, Indeed), and vision-based fallback for complex UI 
+    steps. Delegate any phase that requires interacting with the screen or apps to this agent.
+    This agent is responsible for all the desktop UI automation tasks.""",
+    instruction=system_prompt_provider,
+    tools=[
+        list_active_windows,
+        manage_window,
+        find_ui_elements,
+        get_window_tree,
+        interact_with_element,
+        wait_for_element,
+        scroll_page,
+        get_form_fields,
+        select_dropdown_option,
+        select_option_by_label,
+        clipboard_get,
+        clipboard_set,
+        list_directory,
+        move_file,
+        write_file,
+        read_file,
+        append_to_file,
+        read_pdf,
+        read_csv,
+        write_csv,
+        search_files,
+        file_exists,
+        get_file_info,
+        copy_file,
+        delete_file,
+        create_directory,
+        find_in_file,
+        get_system_info,
+        press_hotkey,
+        navigate_to_url,
+        launch_and_get_pid,
+        upload_file,
+        AgentTool(agent=fallback_agent),
+    ],
+    planner=_planner,
+)
+
+parent_agent = Agent(
+    model="gemini-3-pro-preview",
+    name="planner",
+    description="""High-level planner that breaks goals into phases and delegates desktop automation to desktop_agent.
+    This agent is responsible for breaking down the user's goal into clear phases and delegating the tasks to the desktop_agent.""",
+    instruction=parent_prompt_provider,
+    tools=[],
+    sub_agents=[desktop_agent],
+)
