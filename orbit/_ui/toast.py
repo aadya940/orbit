@@ -1,4 +1,5 @@
 """Bottom-right toast UI for human-in-the-loop (approval / help)."""
+
 import asyncio
 from typing import Any
 
@@ -23,23 +24,31 @@ def run_toast_ui(kind: str, context: dict[str, Any]) -> dict[str, Any]:
         try:
             font_cursive = tkfont.Font(root=root, family="Lucida Handwriting", size=15)
         except Exception:
-            font_cursive = tkfont.Font(root=root, family="Segoe UI", size=13, weight=tkfont.BOLD)
+            font_cursive = tkfont.Font(
+                root=root, family="Segoe UI", size=13, weight=tkfont.BOLD
+            )
 
     font_heading = tkfont.Font(root=root, family="Segoe UI", size=9, weight=tkfont.BOLD)
     font_body = tkfont.Font(root=root, family="Segoe UI", size=8)
     font_mono = tkfont.Font(root=root, family="Consolas", size=8)
-    font_btn_bold = tkfont.Font(root=root, family="Segoe UI", size=8, weight=tkfont.BOLD)
+    font_btn_bold = tkfont.Font(
+        root=root, family="Segoe UI", size=8, weight=tkfont.BOLD
+    )
     font_btn = tkfont.Font(root=root, family="Segoe UI", size=8)
 
     card = tk.Frame(root, bg="#ffffff", padx=9, pady=7)
     card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
     # Header: "Orbit" in cursive
-    orbit_lbl = tk.Label(card, text="Orbit", fg="#000000", bg="#ffffff", font=font_cursive)
+    orbit_lbl = tk.Label(
+        card, text="Orbit", fg="#000000", bg="#ffffff", font=font_cursive
+    )
     orbit_lbl.pack(anchor="w", pady=(0, 3))
 
     subtitle = "Permission required" if kind == "approval" else "Human step"
-    sub_lbl = tk.Label(card, text=subtitle, fg="#000000", bg="#ffffff", font=font_heading)
+    sub_lbl = tk.Label(
+        card, text=subtitle, fg="#000000", bg="#ffffff", font=font_heading
+    )
     sub_lbl.pack(anchor="w", pady=(0, 3))
 
     # Body
@@ -178,11 +187,16 @@ def run_toast_ui(kind: str, context: dict[str, Any]) -> dict[str, Any]:
     return (
         result
         if result
-        else {"status": "rejected" if kind == "approval" else "completed", "message": "Closed"}
+        else {
+            "status": "rejected" if kind == "approval" else "completed",
+            "message": "Closed",
+        }
     )
 
 
-async def default_human_in_the_loop(kind: str, context: dict[str, Any]) -> dict[str, Any]:
+async def default_human_in_the_loop(
+    kind: str, context: dict[str, Any]
+) -> dict[str, Any]:
     """Default handler: toast in bottom-right. Override with Agent(human_in_the_loop=...) for custom behavior."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, run_toast_ui, kind, context)

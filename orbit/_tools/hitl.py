@@ -41,7 +41,9 @@ def move_files(operations: List[Dict[str, str]]) -> Dict[str, Any]:
 
 def create_directory_and_move(directory: str, src_paths: List[str]) -> Dict[str, Any]:
     """Creates a directory then moves all given paths into it. Requires approval."""
-    return _pending("create_directory_and_move", directory=directory, src_paths=src_paths)
+    return _pending(
+        "create_directory_and_move", directory=directory, src_paths=src_paths
+    )
 
 
 def delete_file(path: str) -> Dict[str, Any]:

@@ -201,15 +201,16 @@ def move_files(operations: List[Dict[str, str]]) -> Dict[str, Any]:
             shutil.move(src, dst)
             results.append({"src": src, "dst": dst, "status": "success"})
         except Exception as e:
-            results.append({"src": src, "dst": dst, "status": "error", "message": str(e)})
+            results.append(
+                {"src": src, "dst": dst, "status": "error", "message": str(e)}
+            )
     failed = [r for r in results if r.get("status") == "error"]
     return {
         "status": "success" if not failed else "partial",
         "count": len(results),
         "results": results,
-        "message": f"Moved {len(results) - len(failed)} of {len(results)}." + (
-            f" {len(failed)} failed." if failed else ""
-        ),
+        "message": f"Moved {len(results) - len(failed)} of {len(results)}."
+        + (f" {len(failed)} failed." if failed else ""),
     }
 
 
