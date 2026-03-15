@@ -188,6 +188,46 @@ def move_file(src: str, dst: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
+def move_files(operations: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    Moves multiple files or folders in one call. Each operation has "src" and "dst".
+    Use this instead of many move_file calls when moving several files (e.g. into a folder).
+    """
+    results: List[Dict[str, Any]] = []
+    for op in operations:
+        src = op.get("src") or ""
+        dst = op.get("dst") or ""
+        try:
+            shutil.move(src, dst)
+            results.append({"src": src, "dst": dst, "status": "success"})
+        except Exception as e:
+            results.append({"src": src, "dst": dst, "status": "error", "message": str(e)})
+    failed = [r for r in results if r.get("status") == "error"]
+    return {
+        "status": "success" if not failed else "partial",
+        "count": len(results),
+        "results": results,
+        "message": f"Moved {len(results) - len(failed)} of {len(results)}." + (
+            f" {len(failed)} failed." if failed else ""
+        ),
+    }
+
+
+def create_directory_and_move(directory: str, src_paths: List[str]) -> Dict[str, Any]:
+    """
+    Creates the directory (and parents) then moves all given files/folders into it.
+    Equivalent to create_directory(directory) then move_files([{src, dst} for each path]).
+    """
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    operations = [
+        {"src": p, "dst": str(Path(directory) / Path(p).name)} for p in src_paths
+    ]
+    return move_files(operations)
+
+
 def delete_file(path: str) -> Dict[str, Any]:
     """
     Moves a file to the system trash (recoverable). Uses send2trash so the file

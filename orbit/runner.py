@@ -16,22 +16,30 @@ from ._tools.hitl import APPROVAL_TOOLS
 from ._ui import default_human_in_the_loop
 
 
-def _get_long_running_function_call(event: Any) -> Optional[Any]:
-    """Get the function call from the event if it is a long-running tool call."""
+def _get_long_running_calls(event: Any) -> list[tuple[Any, Any]]:
+    """
+    Get all (function_call, function_response) from the event for long-running tool calls.
+    Returns a list in order of appearance; each call id appears at most once.
+    """
     if (
         not getattr(event, "long_running_tool_ids", None)
         or not getattr(event, "content", None)
         or not event.content.parts
     ):
-        return None
+        return []
+    out: list[tuple[Any, Any]] = []
+    seen: set[str] = set()
     for part in event.content.parts:
-        if (
-            getattr(part, "function_call", None)
-            and event.long_running_tool_ids
-            and part.function_call.id in event.long_running_tool_ids
+        if not getattr(part, "function_call", None) or part.function_call.id not in (
+            event.long_running_tool_ids or ()
         ):
-            return part.function_call
-    return None
+            continue
+        if part.function_call.id in seen:
+            continue
+        seen.add(part.function_call.id)
+        fr = _get_function_response(event, part.function_call.id)
+        out.append((part.function_call, fr))
+    return out
 
 
 def _get_function_response(event: Any, function_call_id: str) -> Optional[Any]:
@@ -167,16 +175,15 @@ class Agent:
         _last = time.time()
 
         while True:
-            long_running_call = None
-            long_running_response = None
+            pending: list[tuple[Any, Any]] = []
+            seen_ids: set[str] = set()
 
             async for event in events:
-                if not long_running_call:
-                    long_running_call = _get_long_running_function_call(event)
-                    if long_running_call and long_running_response is None:
-                        long_running_response = _get_function_response(
-                            event, long_running_call.id
-                        )
+                # Collect all long-running (fc, fr) in order, no duplicates
+                for fc, fr in _get_long_running_calls(event):
+                    if fc.id not in seen_ids:
+                        seen_ids.add(fc.id)
+                        pending.append((fc, fr))
 
                 if event.is_final_response():
                     if latency:
@@ -193,14 +200,6 @@ class Agent:
                                 if part.function_call.args
                                 else {}
                             )
-                            if (
-                                long_running_call is None
-                                and long_running_response is None
-                                and getattr(event, "long_running_tool_ids", None)
-                            ):
-                                long_running_response = _get_function_response(
-                                    event, part.function_call.id
-                                )
                             if latency:
                                 step_sec = latency.on_function_call(name, args)
                                 if self.verbose:
@@ -214,12 +213,6 @@ class Agent:
                                     )
                             _last = now
                         elif getattr(part, "function_response", None):
-                            if (
-                                long_running_call
-                                and getattr(part.function_response, "id", None)
-                                == long_running_call.id
-                            ):
-                                long_running_response = part.function_response
                             name = getattr(part.function_response, "name", "?")
                             if latency:
                                 tool_sec = latency.on_function_response(name)
@@ -234,10 +227,11 @@ class Agent:
                                     )
                             _last = time.time()
 
-            if long_running_call is None:
+            if not pending:
                 break
 
-            # Paused on long-running tool: ask human and resume
+            # Process the first pending long-running call, then resume
+            long_running_call, long_running_response = pending[0]
             name = long_running_call.name
             args = dict(long_running_call.args) if long_running_call.args else {}
             kind = "approval" if name in APPROVAL_TOOLS else "help"
