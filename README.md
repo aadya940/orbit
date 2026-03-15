@@ -1,5 +1,3 @@
-## Orbit
-
 <p>
 <img src="logo.png" align="center">
 </p>
