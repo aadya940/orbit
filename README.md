@@ -1,5 +1,9 @@
 ## Orbit
 
+<p>
+<img src="logo.png" align="center">
+</p>
+
 Orbit is a general-purpose **computer-use agent** designed for ease of use and low token usage.
 
 It can interact with your desktop and browser to:
