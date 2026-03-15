@@ -18,6 +18,7 @@ from .hotkey import press_hotkey
 
 logger = logging.getLogger(__name__)
 
+
 def get_system_info() -> Dict[str, Any]:
     """
     Returns system information including the current user's Desktop path,
@@ -37,6 +38,7 @@ def get_system_info() -> Dict[str, Any]:
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 
 def read_file(path: str) -> Dict[str, Any]:
     """Reads the content of a text file."""
@@ -74,10 +76,7 @@ def read_pdf(path: str) -> Dict[str, Any]:
     """Reads and extracts text from a PDF file. Always use this for .pdf files."""
     try:
         with pdfplumber.open(path) as pdf:
-            text = "\n".join(
-                page.extract_text() or ""
-                for page in pdf.pages
-            )
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
         return {"status": "success", "content": text}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -136,10 +135,7 @@ def search_files(directory: str, pattern: str) -> Dict[str, Any]:
         pattern (str): Glob pattern e.g. '*.pdf', '*.txt', 'resume*'
     """
     try:
-        matches = glob.glob(
-            os.path.join(directory, "**", pattern),
-            recursive=True
-        )
+        matches = glob.glob(os.path.join(directory, "**", pattern), recursive=True)
         return {"status": "success", "matches": matches, "count": len(matches)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -363,7 +359,9 @@ def _find_open_button(dialog_pid: int) -> str | None:
         if (b.get("automation_id") or "").strip() == "DropDown":
             continue
         rect = b.get("rect") or {}
-        if (rect.get("width") or 0) >= 50 and "cancel" not in (b.get("name") or b.get("title") or "").lower():
+        if (rect.get("width") or 0) >= 50 and "cancel" not in (
+            b.get("name") or b.get("title") or ""
+        ).lower():
             return b["oculos_id"]
     if buttons:
         return buttons[0]["oculos_id"]

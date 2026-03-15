@@ -16,6 +16,7 @@ from orbit._oculus_client import OculOS
 
 oculos_client = OculOS()
 
+
 def list_active_windows() -> Dict[str, Any]:
     """
     Retrieves a list of all currently visible desktop windows.
@@ -116,7 +117,9 @@ async def wait_for_element(
         "polls_done": polls_done,
         "timeout_sec": timeout,
         "last_poll_status": last_result.get("status") if last_result else None,
-        "last_poll_message": last_result.get("message", "")[:200] if last_result else None,
+        "last_poll_message": (
+            last_result.get("message", "")[:200] if last_result else None
+        ),
     }
 
 
@@ -265,6 +268,7 @@ async def interact_with_element(
         scroll_direction (str, optional): Required ONLY for 'scroll'. E.g., 'up', 'down', 'left', 'right'.
         range_value (float, optional): Required ONLY for 'set_range'.
     """
+
     def _do() -> None:
         if action == "click":
             oculos_client.click(element_id)
@@ -291,7 +295,9 @@ async def interact_with_element(
         elif action == "highlight":
             oculos_client.highlight(element_id)
         else:
-            raise ValueError(f"Invalid action '{action}' or missing required parameters.")
+            raise ValueError(
+                f"Invalid action '{action}' or missing required parameters."
+            )
 
     try:
         _do()
@@ -316,27 +322,26 @@ async def interact_with_element(
                 return {"status": "error", "message": f"Interaction failed: {str(e2)}"}
         return {"status": "error", "message": f"Interaction failed: {msg}"}
 
+
 def navigate_to_url(pid: int, url: str) -> Dict[str, Any]:
     try:
         oculos_client.focus_window(pid)
         elements = oculos_client.find_elements(
-            pid,
-            query="Address and search bar",
-            interactive=True
+            pid, query="Address and search bar", interactive=True
         )
         if not elements:
             return {"status": "error", "message": "Address bar not found."}
-        
+
         address_bar_id = elements[0]["oculos_id"]
-        
+
         # Click to focus, select all existing content, replace with new URL
         oculos_client.click(address_bar_id)
         oculos_client.set_text(address_bar_id, url)  # set_text replaces entirely
         oculos_client.send_keys(address_bar_id, "{ENTER}")
-        
+
         return {
             "status": "success",
-            "message": f"Navigated to {url}. Call wait_for_element to confirm page loaded. Do NOT call press_hotkey or interact_with_element after this."
+            "message": f"Navigated to {url}. Call wait_for_element to confirm page loaded. Do NOT call press_hotkey or interact_with_element after this.",
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -351,9 +356,13 @@ async def launch_and_get_pid(app_name: str) -> Dict[str, Any]:
             if result["status"] == "success" and result["windows"]:
                 return {"status": "success", "windows": result["windows"]}
             await asyncio.sleep(0)
-        return {"status": "error", "message": f"App {app_name} did not appear after launch."}
+        return {
+            "status": "error",
+            "message": f"App {app_name} did not appear after launch.",
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 
 async def take_screenshot(tool_context: ToolContext) -> Dict[str, Any]:
     """
@@ -368,17 +377,11 @@ async def take_screenshot(tool_context: ToolContext) -> Dict[str, Any]:
         screenshot.save(buffer, format="JPEG")
         image_bytes = buffer.getvalue()
 
-        artifact = types.Part.from_bytes(
-            data=image_bytes,
-            mime_type="image/jpeg"
-        )
-        await tool_context.save_artifact(
-            filename="screenshot.jpg",
-            artifact=artifact
-        )
+        artifact = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+        await tool_context.save_artifact(filename="screenshot.jpg", artifact=artifact)
         return {
             "status": "success",
-            "message": "Screenshot saved. Analyze it and use mouse_click(x, y) to interact."
+            "message": "Screenshot saved. Analyze it and use mouse_click(x, y) to interact.",
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -434,20 +437,35 @@ def scroll_page(direction: str, amount: int = 3) -> Dict[str, Any]:
             return {"status": "error", "message": "Direction must be 'up' or 'down'"}
         return {
             "status": "success",
-            "message": f"Scrolled {direction} by {amount} steps."
+            "message": f"Scrolled {direction} by {amount} steps.",
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
 def get_form_fields(pid: int) -> Dict[str, Any]:
     try:
-        text_fields = oculos_client.find_elements(pid, interactive=True, element_type="Edit")
-        dropdowns = oculos_client.find_elements(pid, interactive=True, element_type="ComboBox")
-        checkboxes = oculos_client.find_elements(pid, interactive=True, element_type="CheckBox")
-        buttons = oculos_client.find_elements(pid, interactive=True, element_type="Button")
-        number_inputs = oculos_client.find_elements(pid, interactive=True, element_type="Spinner")
-        labels = oculos_client.find_elements(pid, interactive=False, element_type="Text")
-        radio_buttons = oculos_client.find_elements(pid, interactive=True, element_type="RadioButton")
+        text_fields = oculos_client.find_elements(
+            pid, interactive=True, element_type="Edit"
+        )
+        dropdowns = oculos_client.find_elements(
+            pid, interactive=True, element_type="ComboBox"
+        )
+        checkboxes = oculos_client.find_elements(
+            pid, interactive=True, element_type="CheckBox"
+        )
+        buttons = oculos_client.find_elements(
+            pid, interactive=True, element_type="Button"
+        )
+        number_inputs = oculos_client.find_elements(
+            pid, interactive=True, element_type="Spinner"
+        )
+        labels = oculos_client.find_elements(
+            pid, interactive=False, element_type="Text"
+        )
+        radio_buttons = oculos_client.find_elements(
+            pid, interactive=True, element_type="RadioButton"
+        )
 
         return {
             "status": "success",
@@ -463,7 +481,9 @@ def get_form_fields(pid: int) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-async def select_dropdown_option(pid: int, dropdown_query: str, option: str) -> Dict[str, Any]:
+async def select_dropdown_option(
+    pid: int, dropdown_query: str, option: str
+) -> Dict[str, Any]:
     """
     Select an option from a dropdown/ComboBox.
 
@@ -489,7 +509,10 @@ async def select_dropdown_option(pid: int, dropdown_query: str, option: str) -> 
             return len(a_toks & b_toks) / max(1, len(b_toks))
 
         # 1) Find candidate dropdowns in this PID
-        candidates = oculos_client.find_elements(pid, interactive=True, element_type="ComboBox") or []
+        candidates = (
+            oculos_client.find_elements(pid, interactive=True, element_type="ComboBox")
+            or []
+        )
 
         # Try exact-ish query first (keeps behavior when labels match well)
         direct = oculos_client.find_elements(
@@ -523,10 +546,15 @@ async def select_dropdown_option(pid: int, dropdown_query: str, option: str) -> 
 
         # Helper: check if dropdown value reflects `option`
         def _value_is_set() -> bool:
-            refreshed = oculos_client.find_elements(pid, interactive=True, element_type="ComboBox") or []
+            refreshed = (
+                oculos_client.find_elements(
+                    pid, interactive=True, element_type="ComboBox"
+                )
+                or []
+            )
             for c in refreshed:
                 if c.get("oculos_id") == dropdown_id:
-                    val = (c.get("value") or c.get("text_content") or "")
+                    val = c.get("value") or c.get("text_content") or ""
                     return _norm(option) in _norm(str(val))
             return False
 
@@ -543,7 +571,9 @@ async def select_dropdown_option(pid: int, dropdown_query: str, option: str) -> 
             opts = oculos_client.find_elements(
                 pid, query=option, interactive=True, element_type="ListItem"
             )
-            return opts or oculos_client.find_elements(pid, query=option, interactive=True)
+            return opts or oculos_client.find_elements(
+                pid, query=option, interactive=True
+            )
 
         for _attempt in range(3):
             oculos_client.click(dropdown_id)
@@ -573,7 +603,10 @@ async def select_dropdown_option(pid: int, dropdown_query: str, option: str) -> 
 
         # 4) If we couldn't verify selection, return diagnostics
         available_options = []
-        items = oculos_client.find_elements(pid, interactive=True, element_type="ListItem") or []
+        items = (
+            oculos_client.find_elements(pid, interactive=True, element_type="ListItem")
+            or []
+        )
         for i in items:
             name = i.get("name") or i.get("label") or i.get("title") or ""
             if name:
@@ -582,7 +615,9 @@ async def select_dropdown_option(pid: int, dropdown_query: str, option: str) -> 
         return {
             "status": "error",
             "message": f"Could not select '{option}' for dropdown '{dropdown_query}' (value did not update).",
-            "dropdown_label": dropdown.get("label") or dropdown.get("title") or dropdown.get("name"),
+            "dropdown_label": dropdown.get("label")
+            or dropdown.get("title")
+            or dropdown.get("name"),
             "available_options_sample": available_options[:30],
         }
     except Exception as e:

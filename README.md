@@ -44,3 +44,30 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+## Human-in-the-loop Callback
+
+To use your own UI or logic (e.g. CLI prompt, modal, or API), pass a **custom callback** as `human_in_the_loop`:
+
+```python
+async def approval_handler(kind: str, context: dict) -> dict:
+    # kind is "approval" (Disk I/O) or "help" (request_human)
+    # context has e.g. tool, path, description, etc.
+    if kind == "approval":
+        tool, path = context.get("tool"), context.get("path", "")
+        # Show your UI (modal, CLI, etc.), then return:
+        return {"status": "approved"}   # or {"status": "rejected", "message": "..."}
+    if kind == "help":
+        # Human step (e.g. "Solve the CAPTCHA")
+        return {"status": "completed"}
+    return {"status": "rejected"}
+
+agent = Agent(
+    task="...",
+    human_in_the_loop=my_approval_handler,
+)
+await agent.run()
+```
+
+- **Approval:** return `{"status": "approved"}` to run the tool; `{"status": "rejected"}` to cancel. For approval, Orbit runs the real tool after you approve and sends its result back to the agent.
+- **Help:** return `{"status": "completed"}` (or any dict) so the agent can continue. You can include a short `message` for the model if useful.

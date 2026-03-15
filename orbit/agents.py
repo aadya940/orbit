@@ -2,7 +2,7 @@ from google.adk.agents import Agent
 from google.genai import types
 
 from google.adk.planners.built_in_planner import BuiltInPlanner
-from google.adk.tools import AgentTool
+from google.adk.tools import AgentTool, LongRunningFunctionTool
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
@@ -33,27 +33,30 @@ from ._tools.clipboard import (
 from ._tools.filesystem import (
     get_system_info,
     read_file,
-    write_file,     
-    append_to_file,
     read_pdf,
     read_csv,
-    write_csv,
     list_directory,
     search_files,
     file_exists,
     get_file_info,
-    copy_file,
-    move_file,
-    delete_file,
-    create_directory,
     find_in_file,
-    upload_file,
+)
+from ._tools.hitl import (
+    write_file as write_file_approval,
+    append_to_file as append_to_file_approval,
+    write_csv as write_csv_approval,
+    copy_file as copy_file_approval,
+    move_file as move_file_approval,
+    delete_file,
+    create_directory as create_directory_approval,
+    upload_file as upload_file_approval,
+    request_human,
 )
 from ._tools.hotkey import press_hotkey
 
+
 async def inject_screenshot_callback(
-    callback_context: CallbackContext,
-    llm_request: LlmRequest
+    callback_context: CallbackContext, llm_request: LlmRequest
 ) -> None:
     """
     Finds screenshot artifacts in tool responses and injects
@@ -63,10 +66,12 @@ async def inject_screenshot_callback(
         if not content.parts:
             continue
         for part in content.parts:
-            if (hasattr(part, "function_response") and
-                part.function_response and
-                part.function_response.name == "take_screenshot"):
-                
+            if (
+                hasattr(part, "function_response")
+                and part.function_response
+                and part.function_response.name == "take_screenshot"
+            ):
+
                 response = part.function_response.response
                 if response.get("status") == "success":
                     # Load the artifact
@@ -80,11 +85,13 @@ async def inject_screenshot_callback(
                                     types.Part(
                                         inline_data=types.Blob(
                                             mime_type="image/jpeg",
-                                            data=artifact.inline_data.data
+                                            data=artifact.inline_data.data,
                                         )
                                     ),
-                                    types.Part(text="This is the current screenshot. Use mouse_click(x, y) to interact with what you see.")
-                                ]
+                                    types.Part(
+                                        text="This is the current screenshot. Use mouse_click(x, y) to interact with what you see."
+                                    ),
+                                ],
                             )
                         )
     return None
@@ -93,8 +100,10 @@ async def inject_screenshot_callback(
 _model_args = types.ThinkingConfig(thinking_budget=-1)
 _planner = BuiltInPlanner(thinking_config=_model_args)
 
+
 def system_prompt_provider(context: ReadonlyContext) -> str:
     return SYSTEM_PROMPT
+
 
 def fallback_prompt_provider(context: ReadonlyContext) -> str:
     return FALLBACK_SYSTEM_PROMPT
@@ -138,25 +147,26 @@ desktop_agent = Agent(
         clipboard_get,
         clipboard_set,
         list_directory,
-        move_file,
-        write_file,
+        LongRunningFunctionTool(move_file_approval),
+        LongRunningFunctionTool(write_file_approval),
         read_file,
-        append_to_file,
+        LongRunningFunctionTool(append_to_file_approval),
         read_pdf,
         read_csv,
-        write_csv,
+        LongRunningFunctionTool(write_csv_approval),
         search_files,
         file_exists,
         get_file_info,
-        copy_file,
-        delete_file,
-        create_directory,
+        LongRunningFunctionTool(copy_file_approval),
+        LongRunningFunctionTool(delete_file),
+        LongRunningFunctionTool(create_directory_approval),
         find_in_file,
         get_system_info,
         press_hotkey,
         navigate_to_url,
         launch_and_get_pid,
-        upload_file,
+        LongRunningFunctionTool(upload_file_approval),
+        LongRunningFunctionTool(request_human),
         AgentTool(agent=fallback_agent),
     ],
     planner=_planner,

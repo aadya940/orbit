@@ -54,7 +54,9 @@ EFFICIENCY RULES:
       interact_with_element(action='select') on a true RadioButton OR select_option_by_label(pid, label_text)
       for custom controls.
 
-13. BUTTONS:
+13. HUMAN HELP: When you cannot complete a step (CAPTCHA, login, or blocked UI), call request_human(description="...", context={}) so the user can complete it. Do not retry indefinitely.
+
+14. BUTTONS:
    - RADIO BUTTONS: Prefer interact_with_element(action='select') when the element_type is 'RadioButton'.
      When a choice is implemented as a Button/ListItem (e.g., LinkedIn resume options), use
      select_option_by_label(pid=..., label_text=...) or interact_with_element(action='click')
@@ -151,7 +153,17 @@ STRICT RULES:
 - NEVER retry navigate_to_url more than twice
 """
 
-SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + STANDARD_PATTERNS + "\n\n" + INTERACTION_RECIPES + "\n\n" + BROWSER_RULES + "\n\n" + STRICT_RULES
+SYSTEM_PROMPT = (
+    SYSTEM_PROMPT
+    + "\n\n"
+    + STANDARD_PATTERNS
+    + "\n\n"
+    + INTERACTION_RECIPES
+    + "\n\n"
+    + BROWSER_RULES
+    + "\n\n"
+    + STRICT_RULES
+)
 
 FALLBACK_SYSTEM_PROMPT = """
 You are a vision-based desktop automation fallback agent.
