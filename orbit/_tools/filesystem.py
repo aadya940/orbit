@@ -13,6 +13,8 @@ import time
 import send2trash
 
 from .ui import oculos_client
+from .clipboard import clipboard_set
+from .hotkey import press_hotkey
 
 logger = logging.getLogger(__name__)
 
@@ -236,19 +238,6 @@ def find_in_file(path: str, query: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-async def wait_for_file_dialog(timeout=10):
-    """Wait for Windows file dialog and return its PID. Polls until condition (no fixed sleep)."""
-    start = time.time()
-    while time.time() - start < timeout:
-        windows = oculos_client.list_windows()
-        for w in windows:
-            title = (w.get("title") or "").lower()
-            if title == "open":
-                return w["pid"]
-        await asyncio.sleep(0)
-    return None
-
-
 def _is_file_dialog_window(win: Dict[str, Any]) -> bool:
     """
     Heuristic to detect a file-open dialog window.
@@ -296,43 +285,58 @@ async def _wait_for_dialog_close(timeout: float = 10.0) -> bool:
     return False
 
 
+def _is_likely_address_bar(element: Dict[str, Any]) -> bool:
+    """True if this looks like the path/address bar (typing here navigates). Must not paste path here."""
+    name = (element.get("name") or element.get("title") or "").strip()
+    name_lower = name.lower()
+    # Explicit labels
+    if any(s in name_lower for s in ("address", "location", "path", "search", "go to")):
+        return True
+    # Path-like: current path or breadcrumb (e.g. "<< projects freebsd-contrib src" or "C:\Users\...")
+    if "\\" in name or "/" in name or name.startswith("<<"):
+        return True
+    # Multiple path-segment-like tokens (e.g. "projects freebsd-contrib src") with no "file name"
+    if "file name" not in name_lower and len(name.split()) >= 2:
+        return True
+    return False
+
+
 def _find_file_name_field(dialog_pid: int) -> str | None:
     """
-    Robust search for the 'File name' input in the dialog.
-    Falls back to the last interactive Edit/ComboBox if label-based search fails.
+    Find the bottom "File name:" text input in the Windows file dialog. Never return the address bar.
+    Prefer Edit over ComboBox: focusing the ComboBox often focuses the dropdown arrow first, so
+    Ctrl+V/Enter then act on the dropdown and close the dialog without pasting the path.
     """
-    # First, try label + control type combinations
+    # Prefer Edit (the actual text box); avoid ComboBox (has dropdown arrow, focus goes there first)
     for query, etype in [
-        ("File name:", "ComboBox"),
         ("File name:", "Edit"),
         ("File name", "Edit"),
+        ("File name:", "ComboBox"),
+        ("File name", "ComboBox"),
     ]:
         inputs = oculos_client.find_elements(
-            dialog_pid,
-            query=query,
-            element_type=etype,
-            interactive=True,
+            dialog_pid, query=query, element_type=etype, interactive=True
         )
-        if inputs:
-            return inputs[0]["oculos_id"]
+        for el in reversed(inputs):
+            if not _is_likely_address_bar(el):
+                return el["oculos_id"]
 
-    # Fallback: last interactive Edit/ComboBox in this dialog
+    # Fallback: any Edit or ComboBox with "file name" in name (and not address bar)
     for etype in ("Edit", "ComboBox"):
-        inputs = oculos_client.find_elements(
-            dialog_pid,
-            element_type=etype,
-            interactive=True,
-        )
-        if inputs:
-            return inputs[-1]["oculos_id"]
+        for el in oculos_client.find_elements(
+            dialog_pid, element_type=etype, interactive=True
+        ):
+            name = (el.get("name") or el.get("title") or "").lower()
+            if "file name" in name and not _is_likely_address_bar(el):
+                return el["oculos_id"]
 
     return None
 
 
 def _find_open_button(dialog_pid: int) -> str | None:
     """
-    Robust search for the 'Open' button in the file dialog.
-    Falls back to the first interactive Button if label-based search fails.
+    Find the main 'Open' button (the one that submits the file), not the dropdown arrow.
+    Skip buttons with automation_id 'DropDown' or very small rect (dropdown arrows).
     """
     buttons = oculos_client.find_elements(
         dialog_pid,
@@ -340,18 +344,29 @@ def _find_open_button(dialog_pid: int) -> str | None:
         element_type="Button",
         interactive=True,
     )
+    for b in buttons:
+        aid = (b.get("automation_id") or "").strip()
+        rect = b.get("rect") or {}
+        w = rect.get("width") or 0
+        if aid == "DropDown" or w < 30:
+            continue
+        return b["oculos_id"]
     if buttons:
-        return buttons[0]["oculos_id"]
+        return buttons[-1]["oculos_id"]
 
-    # Fallback: any interactive button (often the default 'Open' action)
     buttons = oculos_client.find_elements(
         dialog_pid,
         element_type="Button",
         interactive=True,
     )
+    for b in buttons:
+        if (b.get("automation_id") or "").strip() == "DropDown":
+            continue
+        rect = b.get("rect") or {}
+        if (rect.get("width") or 0) >= 50 and "cancel" not in (b.get("name") or b.get("title") or "").lower():
+            return b["oculos_id"]
     if buttons:
         return buttons[0]["oculos_id"]
-
     return None
 
 
@@ -375,32 +390,35 @@ async def upload_file(element_id: str, path: str) -> Dict[str, Any]:
         if not dialog_pid:
             return {"status": "error", "message": "File dialog not detected"}
 
-        # 3. Locate the 'File name' input field
+        oculos_client.focus_window(dialog_pid)
+
+        # 3. Locate the 'File name' input field (not the address bar)
         field_id = _find_file_name_field(dialog_pid)
         if not field_id:
             return {"status": "error", "message": "File name field not found"}
 
-        # 4. Focus the field and type the file path (no fixed sleeps; one yield before close check)
+        # 4. Put path in the "File name" box: clipboard + system-level paste so the dialog
+        #    actually receives it (element send_keys for ^v can fail in native dialogs).
+        clipboard_set(path)
         oculos_client.focus(field_id)
-        await asyncio.sleep(0)
-        oculos_client.send_keys(field_id, "^a")
-        oculos_client.send_keys(field_id, "{BACKSPACE}")
-        await asyncio.sleep(0)
-        oculos_client.send_keys(field_id, path)
-        await asyncio.sleep(0)
+        press_hotkey("ctrl+a")
+        press_hotkey("ctrl+v")
 
-        # 5. Click the 'Open' button or press ENTER as a fallback
-        open_button_id = _find_open_button(dialog_pid)
-        if open_button_id:
-            oculos_client.click(open_button_id)
-        else:
-            oculos_client.send_keys(field_id, "{ENTER}")
+        # 5. Submit with Enter (from the focused field)
+        press_hotkey("enter")
+        closed = await _wait_for_dialog_close(timeout=8.0)
+        if not closed:
+            open_button_id = _find_open_button(dialog_pid)
+            if open_button_id:
+                oculos_client.click(open_button_id)
+            else:
+                press_hotkey("enter")
+            closed = await _wait_for_dialog_close(timeout=8.0)
 
-        # 6. Wait until the dialog is fully closed (poll until condition)
-        if not await _wait_for_dialog_close(timeout=10.0):
+        if not closed:
             return {
                 "status": "error",
-                "message": "File dialog did not close after submitting path",
+                "message": "File dialog did not close after submitting path (tried Enter and Open button)",
             }
 
         return {

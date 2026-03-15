@@ -109,6 +109,14 @@ INTERACTION RECIPES (use when the situation matches):
    b. scroll_page(direction='down', amount=2) for browser, or interact_with_element(action='scroll') for native panels
    c. Retry find_ui_elements with the same query
    d. Repeat up to 3 scrolls before get_window_tree or fallback_vision_agent.
+
+5. File upload (Windows file dialog):
+   - Use upload_file(element_id=<upload button>, path=<absolute path>) only. The tool opens the dialog,
+     pastes the path into the "File name" box, and clicks Open.
+   - Do NOT try to navigate the dialog (no typing in the address bar, no clicking folders). Do NOT use
+     set_text, send_keys, clipboard_set, manage_window(focus), press_hotkey(esc), or fallback_vision_agent
+     to "type the path" or "click Open" when a file dialog is open. If upload_file returns an error,
+     do NOT retry with manual steps; report the failure or call upload_file once more with the same path.
 """
 
 BROWSER_RULES = """
