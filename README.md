@@ -18,7 +18,13 @@ Most agents either take repeated screenshots or paste the entire DOM tree into t
 For filesystem safety, other agents rely on complex mechanisms (virtual filesystems, SQLite-backed FS, WALs, etc.). Orbit takes a simpler approach: it never permanently deletes your files. Destructive operations send files and folders to the system Trash/Recycle Bin, so they remain recoverable.
 
 ## Installation
+Currently:
 
+```bash
+pip install .
+```
+
+Coming Soon:
 ```bash
 pip install orbit
 ```
