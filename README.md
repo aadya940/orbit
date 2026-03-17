@@ -21,6 +21,10 @@ For filesystem safety, other agents rely on complex mechanisms (virtual filesyst
 Currently:
 
 ```bash
+cargo build --release
+
+move binary to _bin
+
 pip install .
 ```
 
