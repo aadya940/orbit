@@ -2,7 +2,9 @@
 
 import asyncio
 import time
+import uuid
 from collections.abc import Awaitable, Callable
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from google.adk.runners import Runner
@@ -10,10 +12,35 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from google.adk.artifacts import InMemoryArtifactService
 
-from .agents import build_agents
+from .agents import (
+    build_agents,
+    DESKTOP_EXECUTOR_AGENT_NAME,
+)
 from .daemon import OculOSManager
 from ._tools.hitl import APPROVAL_TOOLS
 from ._ui import default_human_in_the_loop
+from .journal import Journal
+
+
+def _console_safe(obj: Any) -> str:
+    """
+    Return an ASCII-only string for console logging.
+    This prevents Windows terminals (cp1252) from crashing on unexpected unicode
+    such as U+FFFC from accessibility text.
+    """
+    s = str(obj)
+    return s.encode("ascii", errors="backslashreplace").decode("ascii")
+
+
+def _short(obj: Any, max_len: int = 800) -> str:
+    """Best-effort short repr for debug prints."""
+    try:
+        s = repr(obj)
+    except Exception:
+        s = str(obj)
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 20] + " ... (truncated)"
 
 
 def _get_long_running_calls(event: Any) -> list[tuple[Any, Any]]:
@@ -53,6 +80,72 @@ def _get_function_response(event: Any, function_call_id: str) -> Optional[Any]:
         ):
             return part.function_response
     return None
+
+
+def _maybe_enqueue_pending_response(
+    *,
+    pending: list[tuple[Any, Any]],
+    seen_ids: set[str],
+    function_response: Any,
+    debug: bool = False,
+) -> bool:
+    """
+    Some approval stubs return a normal function_response whose payload contains
+    {"status": "pending", "tool": "..."} instead of being surfaced by ADK as a
+    long-running tool call. Treat those as approval requests too.
+    """
+    if not function_response:
+        return False
+    resp = getattr(function_response, "response", None)
+    # NOTE: In practice, ADK/Gemini may surface a dict-like Mapping that prints as
+    # "{'status': 'pending', ...}" but is not a concrete "dict" instance.
+    if not isinstance(resp, Mapping):
+        if debug:
+            print(
+                _console_safe(
+                    "[HITL debug] function_response.response is not Mapping: "
+                    f"type={type(resp)} value={_short(resp)}"
+                )
+            )
+        return False
+    status = resp.get("status")
+    if status != "pending":
+        if debug and status is not None:
+            print(
+                _console_safe(
+                    "[HITL debug] response status not pending: "
+                    f"status={status!r} type={type(resp)} keys={list(resp.keys())[:12]}"
+                )
+            )
+        return False
+    tool = resp.get("tool")
+    if not isinstance(tool, str) or tool not in APPROVAL_TOOLS:
+        if debug:
+            print(
+                _console_safe(
+                    "[HITL debug] pending response tool not approvable: "
+                    f"tool={tool!r} approvable={bool(isinstance(tool, str) and tool in APPROVAL_TOOLS)} "
+                    f"type={type(resp)} keys={list(resp.keys())[:12]}"
+                )
+            )
+        return False
+
+    # For payload-based pending approvals, do NOT reuse the long-running
+    # seen_ids guard. Long-running tracking may already have recorded this id,
+    # and we still want to surface the pending approval exactly once here.
+    call_id = getattr(function_response, "id", None) or f"manual-{uuid.uuid4()}"
+
+    args = {k: v for k, v in resp.items() if k not in ("status", "tool")}
+    fc = types.FunctionCall(name=tool, id=call_id, args=args)
+    pending.append((fc, function_response))
+    if debug:
+        print(
+            _console_safe(
+                "[HITL debug] enqueued pending approval: "
+                f"tool={tool!r} call_id={call_id} args_keys={list(args.keys())}"
+            )
+        )
+    return True
 
 
 class _LatencyTracker:
@@ -130,6 +223,7 @@ class Agent:
         llm: str = "gemini-3-pro-preview",
         desktop_llm: Optional[str] = None,
         planner_llm: Optional[str] = None,
+        max_retries_per_step: int = 3,
         measure_latency: bool = True,
         verbose: bool = False,
         human_in_the_loop: Optional[HumanInTheLoopHandler] = None,
@@ -138,6 +232,7 @@ class Agent:
         self.llm = llm
         self.desktop_llm = desktop_llm
         self.planner_llm = planner_llm
+        self.max_retries_per_step = max_retries_per_step
         self.measure_latency = measure_latency
         self.verbose = verbose
         self._human_in_the_loop = human_in_the_loop
@@ -160,6 +255,12 @@ class Agent:
             app_name="desktop_app", user_id="local_admin", session_id="session_001"
         )
 
+        # Ephemeral, attempt-scoped OS Action Journal for the verifier agent
+        # (stored in session.state so the verifier can read it).
+        journal = Journal(core_key="desktop_attempt_0")
+        desktop_attempt_idx = 0
+        journal_active = False
+
         # Allow callers to provide separate model strings for planner vs desktop.
         # If not provided, use `llm` for both for backwards compatibility.
         # LiteLLM model strings are typically provider-prefixed (`provider/model-name`).
@@ -179,7 +280,9 @@ class Agent:
         if planner_model is not None:
             build_kwargs["planner_model"] = planner_model
 
-        parent_agent, _desktop_agent = build_agents(**build_kwargs)
+        parent_agent, _desktop_agent = build_agents(
+            **build_kwargs, max_retries_per_step=self.max_retries_per_step
+        )
 
         runner = Runner(
             agent=parent_agent,
@@ -203,8 +306,23 @@ class Agent:
         while True:
             pending: list[tuple[Any, Any]] = []
             seen_ids: set[str] = set()
+            pause_for_approval = False
 
             async for event in events:
+                # When the desktop executor finishes, finalize the evidence slice.
+                if (
+                    event.is_final_response()
+                    and event.author == DESKTOP_EXECUTOR_AGENT_NAME
+                    and journal_active
+                    and getattr(event, "content", None)
+                    and getattr(event.content, "parts", None)
+                    and event.content.parts
+                    and getattr(event.content.parts[0], "text", None) is not None
+                ):
+                    journal.finalize_end_interactions()
+                    session.state["journal"] = journal.to_dict()
+                    journal_active = False
+
                 # Collect all long-running (fc, fr) in order, no duplicates
                 for fc, fr in _get_long_running_calls(event):
                     if fc.id not in seen_ids:
@@ -215,7 +333,7 @@ class Agent:
                     if latency:
                         latency.on_final_response()
                     if getattr(event, "content", None) and event.content.parts:
-                        print(f"\n{event.content.parts[0].text}")
+                        print(f"\n{_console_safe(event.content.parts[0].text)}")
                 elif getattr(event, "content", None) and event.content.parts:
                     for part in event.content.parts:
                         if getattr(part, "function_call", None):
@@ -226,32 +344,85 @@ class Agent:
                                 if part.function_call.args
                                 else {}
                             )
+
+                            # Journal collection: only during desktop executor.
+                            if (
+                                event.author == DESKTOP_EXECUTOR_AGENT_NAME
+                                and not journal_active
+                            ):
+                                desktop_attempt_idx += 1
+                                phase_instruction = session.state.get(
+                                    "journal_phase_instruction", ""
+                                )
+                                journal.reset(
+                                    core_key=f"desktop_attempt_{desktop_attempt_idx}",
+                                    phase_instruction=str(phase_instruction or ""),
+                                )
+                                session.state["journal"] = journal.to_dict()
+                                journal_active = True
+
+                            if event.author == DESKTOP_EXECUTOR_AGENT_NAME:
+                                journal.record_call(
+                                    call_id=getattr(part.function_call, "id", None),
+                                    tool_name=name,
+                                    tool_args=args,
+                                )
                             if latency:
                                 step_sec = latency.on_function_call(name, args)
                                 if self.verbose:
                                     print(
-                                        f"[{step_sec:.3f}s LLM→tool] [Action]: {name}({args})"
+                                        _console_safe(
+                                            f"[{step_sec:.3f}s LLM->tool] [Action]: {name}({args})"
+                                        )
                                     )
                             else:
                                 if self.verbose:
                                     print(
-                                        f"[{round(now - _last, 2)}s] [Action]: {name}({args})"
+                                        _console_safe(
+                                            f"[{round(now - _last, 2)}s] [Action]: {name}({args})"
+                                        )
                                     )
                             _last = now
                         elif getattr(part, "function_response", None):
                             name = getattr(part.function_response, "name", "?")
+                            pause_for_approval = _maybe_enqueue_pending_response(
+                                pending=pending,
+                                seen_ids=seen_ids,
+                                function_response=part.function_response,
+                                debug=bool(self.verbose),
+                            )
+                            if pause_for_approval:
+                                break
+
+                            if event.author == DESKTOP_EXECUTOR_AGENT_NAME:
+                                journal.record_response(
+                                    call_id=getattr(part.function_response, "id", None),
+                                    tool_name=name,
+                                    response=getattr(
+                                        part.function_response, "response", None
+                                    ),
+                                )
+
                             if latency:
                                 tool_sec = latency.on_function_response(name)
                                 if self.verbose:
                                     print(
-                                        f"[tool {tool_sec:.3f}s] [Result]: {part.function_response.response}"
+                                        _console_safe(
+                                            f"[tool {tool_sec:.3f}s] [Result]: {part.function_response.response}"
+                                        )
                                     )
                             else:
                                 if self.verbose:
                                     print(
-                                        f"[Result]: {part.function_response.response}"
+                                        _console_safe(
+                                            f"[Result]: {part.function_response.response}"
+                                        )
                                     )
                             _last = time.time()
+                    if pause_for_approval:
+                        break
+                if pause_for_approval:
+                    break
 
             if not pending:
                 break
