@@ -204,6 +204,40 @@ def find_ui_elements(
         return {"status": "error", "message": f"Failed to find elements: {str(e)}"}
 
 
+def find_ui_elements_hwnd(
+    hwnd: int,
+    query: Optional[str] = None,
+    element_type: Optional[str] = None,
+    interactive: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """
+    Searches the accessibility tree of a specific window by hwnd for UI elements.
+    Use this for transient windows like context menus (often hosted in PopupHost).
+
+    Args:
+        hwnd (int): The window handle to search inside.
+        query (str, optional): Text/name/title to search for.
+        element_type (str, optional): Semantic role (e.g. 'MenuItem', 'Button').
+        interactive (bool, optional): If True, only returns interactive elements.
+    """
+    try:
+        elements = oculos_client.find_elements_hwnd(
+            hwnd, query=query, element_type=element_type, interactive=interactive
+        )
+        if not elements:
+            return {
+                "status": "success",
+                "message": "No elements found matching the criteria.",
+                "elements": [],
+            }
+        return {"status": "success", "elements": elements}
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to find elements by hwnd: {str(e)}",
+        }
+
+
 def _prune_accessibility_tree(node: dict) -> dict:
     """Recursively removes layout data and empty containers to save LLM context window tokens."""
     pruned_node = {
@@ -248,6 +282,74 @@ def get_window_tree(pid: int) -> Dict[str, Any]:
         return {"status": "success", "tree": lean_tree}
     except Exception as e:
         return {"status": "error", "message": f"Failed to get tree: {str(e)}"}
+
+
+def get_window_tree_hwnd(hwnd: int) -> Dict[str, Any]:
+    """
+    Retrieves the full UI element tree for a given window handle (hwnd).
+    Useful for transient windows such as context menus hosted in PopupHost.
+
+    Args:
+        hwnd (int): The window handle.
+    """
+    try:
+        raw_tree = oculos_client.get_tree_hwnd(hwnd)
+        lean_tree = _prune_accessibility_tree(raw_tree)
+        return {"status": "success", "tree": lean_tree}
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to get tree by hwnd: {str(e)}"}
+
+
+def get_popuphost_menu_window(pid: int) -> Dict[str, Any]:
+    """
+    Heuristic helper: pick the most likely PopupHost window for an open context menu.
+
+    On Windows, desktop and shell context menus are often hosted in transient windows titled
+    'PopupHost' (explorer.exe). These may not be discoverable via the parent window's pid
+    accessibility tree (e.g. Program Manager), so you need the specific menu hwnd.
+
+    This tool scans list_active_windows() output and returns the largest visible PopupHost
+    window for the given pid, which tends to correspond to the currently open menu surface.
+
+    Args:
+        pid (int): The explorer.exe pid (e.g. Program Manager pid) that owns the PopupHost windows.
+    """
+    try:
+        windows = oculos_client.list_windows()
+        candidates: list[dict[str, Any]] = []
+        for w in windows:
+            if not w.get("visible"):
+                continue
+            if w.get("pid") != pid:
+                continue
+            if (w.get("title") or "") != "PopupHost":
+                continue
+            rect = w.get("rect") or {}
+            area = int(rect.get("width") or 0) * int(rect.get("height") or 0)
+            candidates.append({**w, "_area": area})
+
+        if not candidates:
+            return {
+                "status": "error",
+                "message": f"No visible PopupHost windows found for pid={pid}.",
+            }
+
+        # Prefer the largest PopupHost window; this typically matches the open menu panel.
+        best = max(candidates, key=lambda ww: int(ww.get("_area") or 0))
+        best.pop("_area", None)
+        return {
+            "status": "success",
+            "hwnd": best.get("hwnd"),
+            "pid": best.get("pid"),
+            "rect": best.get("rect"),
+            "window": best,
+            "message": "Selected most likely PopupHost menu window (largest area).",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to find PopupHost menu window: {str(e)}",
+        }
 
 
 async def interact_with_element(

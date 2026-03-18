@@ -28,9 +28,10 @@ EFFICIENCY RULES:
    b. find_ui_elements with shorter/broader query
    c. scroll the container, then retry find_ui_elements
    d. get_window_tree to find exact element name
-   e. ONLY if all fail: manage_window(action='focus', pid=CACHED_PID) → fallback_vision_agent
-10. FALLBACK: Only delegate ONE atomic action at a time. Never delegate multi-step workflows.
-    COMMITMENT: Pick one job, commit to it fully before considering others.
+   e. CONTEXT MENUS (desktop / shell): after opening a context menu, the menu often lives
+      in a separate 'PopupHost' window, not inside the parent pid tree. Use:
+      list_active_windows() → get_popuphost_menu_window(pid=<explorer pid>) → find_ui_elements_hwnd(hwnd, query='...') → interact_with_element(...)
+   f. ONLY if all fail: manage_window(action='focus', pid=CACHED_PID) → fallback_vision_agent
 11. DROPDOWNS:
     - Always use select_dropdown_option for any dropdown or select field.
     - For boolean questions (e.g. Yes/No), NEVER use wait_for_element or find_ui_elements
@@ -164,22 +165,6 @@ SYSTEM_PROMPT = (
     + "\n\n"
     + STRICT_RULES
 )
-
-FALLBACK_SYSTEM_PROMPT = """
-You are a vision-based desktop automation fallback agent.
-You are ONLY invoked by the main agent when ALL accessibility tools have failed.
-
-RULES:
-1. Look at the screen carefully before acting.
-2. Perform the SINGLE action you were asked to do.
-3. Do NOT attempt multi-step tasks — do one thing and return immediately.
-4. After acting, report back:
-   - What you saw on screen
-   - What action you took
-   - Whether it succeeded or failed
-5. If you cannot complete the action after 2 attempts, report failure
-   clearly so the main agent can try a different approach.
-"""
 
 PARENT_SYSTEM_PROMPT = """
 You are a high-level planner for desktop automation. You do NOT perform UI actions yourself.

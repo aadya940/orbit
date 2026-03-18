@@ -13,19 +13,32 @@ It can interact with your desktop and browser to:
 
 …and much more.
 
-Most agents either take repeated screenshots or paste the entire DOM tree into the LLM. Orbit instead uses the operating system’s accessibility tree, which lets it control both desktop apps and the browser with far less context bloat. When accessibility isn’t enough, it falls back to a vision-based agent.
+Most agents either take repeated screenshots or paste the entire DOM tree into the LLM. Orbit instead uses the operating system’s accessibility tree, which lets it control both desktop apps and the browser with far less context bloat.
 
-For filesystem safety, other agents rely on complex mechanisms (virtual filesystems, SQLite-backed FS, WALs, etc.). Orbit takes a simpler approach: it never permanently deletes your files. Destructive operations send files and folders to the system Trash/Recycle Bin, so they remain recoverable.
+For filesystem safety, other agents rely on complex mechanisms (virtual filesystems, SQLite-backed FS, WALs, etc.). Orbit takes a simpler approach: it never permanently deletes your files. Destructive operations send files and folders to the system Trash/Recycle Bin, so they remain recoverable. We also use Human In Loop Mechanisms to make the actions intentional.
 
 ## Installation
 Currently:
 
 ```bash
+# clone with submodules (needed for the `oculos/` crate)
+git submodule update --init --recursive
+
+cd oculos
 cargo build --release
 
-move binary to _bin
+cd ..
+mkdir -p orbit/_bin
+#
+# Windows:
+#   copy oculos/target/release/oculos.exe orbit/_bin/oculos.exe
+# Non-Windows (Linux/macOS):
+#   cp oculos/target/release/oculos orbit/_bin/oculos
 
-pip install .
+python -m pip install --upgrade pip
+pip install build
+python -m build
+pip install dist/*.whl
 ```
 
 Coming Soon:

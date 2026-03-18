@@ -6,14 +6,18 @@ from google.adk.tools import AgentTool, LongRunningFunctionTool
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
+from google.adk.models.lite_llm import LiteLlm
 
+import os
 
-from .prompts import SYSTEM_PROMPT, FALLBACK_SYSTEM_PROMPT, PARENT_SYSTEM_PROMPT
+from .prompts import SYSTEM_PROMPT, PARENT_SYSTEM_PROMPT
 from ._tools.ui import (
     list_active_windows,
     manage_window,
     find_ui_elements,
+    find_ui_elements_hwnd,
     get_window_tree,
+    get_window_tree_hwnd,
     interact_with_element,
     wait_for_element,
     navigate_to_url,
@@ -25,6 +29,7 @@ from ._tools.ui import (
     get_form_fields,
     select_dropdown_option,
     select_option_by_label,
+    get_popuphost_menu_window,
 )
 from ._tools.clipboard import (
     clipboard_get,
@@ -55,6 +60,23 @@ from ._tools.hitl import (
     request_human,
 )
 from ._tools.hotkey import press_hotkey
+
+DEFAULT_DESKTOP_MODEL = "gemini-3-pro-preview"
+DEFAULT_PLANNER_MODEL = "gemini-3-pro-preview"
+
+
+def make_lite_llm(model: str) -> LiteLlm:
+    """
+    Create an ADK LiteLlm from the user-provided model string.
+
+    ADK + LiteLLM typically expects provider-prefixed model strings (`provider/model-name`).
+    To keep user experience simple, we normalize the common raw Gemini format
+    `gemini-3-pro-preview` into `gemini/gemini-3-pro-preview` (provider prefix).
+    For any already provider-prefixed model (contains `/`), we pass it through unchanged.
+    """
+    if "/" not in (model or "") and model.startswith("gemini-"):
+        model = f"gemini/{model}"
+    return LiteLlm(model)
 
 
 async def inject_screenshot_callback(
@@ -107,81 +129,85 @@ def system_prompt_provider(context: ReadonlyContext) -> str:
     return SYSTEM_PROMPT
 
 
-def fallback_prompt_provider(context: ReadonlyContext) -> str:
-    return FALLBACK_SYSTEM_PROMPT
-
-
 def parent_prompt_provider(context: ReadonlyContext) -> str:
     return PARENT_SYSTEM_PROMPT
 
 
-fallback_agent = Agent(
-    model="gemini-3-pro-preview",
-    name="fallback_vision_agent",
-    instruction=fallback_prompt_provider,
-    before_model_callback=inject_screenshot_callback,
-    tools=[
-        take_screenshot,
-        mouse_click,
-        mouse_type,
-        press_hotkey,
-    ],
-)
-desktop_agent = Agent(
-    model="gemini-3-pro-preview",
-    name="desktop_agent",
-    description="""Handles all desktop UI automation: browser control, forms, dropdowns, 
-    file uploads, job applications (LinkedIn Easy Apply, Indeed), and vision-based fallback for complex UI 
-    steps. Delegate any phase that requires interacting with the screen or apps to this agent.
-    This agent is responsible for all the desktop UI automation tasks.""",
-    instruction=system_prompt_provider,
-    tools=[
-        list_active_windows,
-        manage_window,
-        find_ui_elements,
-        get_window_tree,
-        interact_with_element,
-        wait_for_element,
-        scroll_page,
-        get_form_fields,
-        select_dropdown_option,
-        select_option_by_label,
-        clipboard_get,
-        clipboard_set,
-        list_directory,
-        LongRunningFunctionTool(move_file_approval),
-        LongRunningFunctionTool(move_files_approval),
-        LongRunningFunctionTool(create_directory_and_move_approval),
-        LongRunningFunctionTool(write_file_approval),
-        read_file,
-        LongRunningFunctionTool(append_to_file_approval),
-        read_pdf,
-        read_csv,
-        LongRunningFunctionTool(write_csv_approval),
-        search_files,
-        file_exists,
-        get_file_info,
-        LongRunningFunctionTool(copy_file_approval),
-        LongRunningFunctionTool(delete_file),
-        LongRunningFunctionTool(create_directory_approval),
-        find_in_file,
-        get_system_info,
-        press_hotkey,
-        navigate_to_url,
-        launch_and_get_pid,
-        LongRunningFunctionTool(upload_file_approval),
-        LongRunningFunctionTool(request_human),
-        AgentTool(agent=fallback_agent),
-    ],
-    planner=_planner,
-)
+def build_desktop_agent(desktop_model: str) -> Agent:
+    return Agent(
+        model=make_lite_llm(desktop_model),
+        name="desktop_agent",
+        description="""Handles all desktop UI automation: browser control, forms, dropdowns, 
+        file uploads, job applications (LinkedIn Easy Apply, Indeed). 
+        Delegate any phase that requires interacting with the screen or apps to this agent.
+        This agent is responsible for all the desktop UI automation tasks.""",
+        instruction=system_prompt_provider,
+        before_model_callback=inject_screenshot_callback,
+        tools=[
+            list_active_windows,
+            manage_window,
+            find_ui_elements,
+            find_ui_elements_hwnd,
+            get_window_tree,
+            get_window_tree_hwnd,
+            interact_with_element,
+            wait_for_element,
+            scroll_page,
+            get_form_fields,
+            select_dropdown_option,
+            select_option_by_label,
+            clipboard_get,
+            clipboard_set,
+            list_directory,
+            LongRunningFunctionTool(move_file_approval),
+            LongRunningFunctionTool(move_files_approval),
+            LongRunningFunctionTool(create_directory_and_move_approval),
+            LongRunningFunctionTool(write_file_approval),
+            read_file,
+            LongRunningFunctionTool(append_to_file_approval),
+            read_pdf,
+            read_csv,
+            LongRunningFunctionTool(write_csv_approval),
+            search_files,
+            file_exists,
+            get_file_info,
+            LongRunningFunctionTool(copy_file_approval),
+            LongRunningFunctionTool(delete_file),
+            LongRunningFunctionTool(create_directory_approval),
+            find_in_file,
+            get_system_info,
+            press_hotkey,
+            navigate_to_url,
+            launch_and_get_pid,
+            get_popuphost_menu_window,
+            LongRunningFunctionTool(upload_file_approval),
+            LongRunningFunctionTool(request_human),
+        ],
+        planner=_planner,
+    )
 
-parent_agent = Agent(
-    model="gemini-3-pro-preview",
-    name="planner",
-    description="""High-level planner that breaks goals into phases and delegates desktop automation to desktop_agent.
-    This agent is responsible for breaking down the user's goal into clear phases and delegating the tasks to the desktop_agent.""",
-    instruction=parent_prompt_provider,
-    tools=[],
-    sub_agents=[desktop_agent],
-)
+
+def build_parent_agent(planner_model: str, desktop_agent: Agent) -> Agent:
+    return Agent(
+        model=make_lite_llm(planner_model),
+        name="planner",
+        description="""High-level planner that breaks goals into phases and delegates desktop automation to desktop_agent.
+        This agent is responsible for breaking down the user's goal into clear phases and delegating the tasks to the desktop_agent.""",
+        instruction=parent_prompt_provider,
+        tools=[],
+        sub_agents=[desktop_agent],
+    )
+
+
+def build_agents(
+    *,
+    desktop_model: str = DEFAULT_DESKTOP_MODEL,
+    planner_model: str = DEFAULT_PLANNER_MODEL,
+) -> tuple[Agent, Agent]:
+    """Return (parent_agent, desktop_agent) for the requested model strings."""
+    desktop_agent = build_desktop_agent(desktop_model)
+    parent_agent = build_parent_agent(planner_model, desktop_agent)
+    return parent_agent, desktop_agent
+
+
+parent_agent, desktop_agent = build_agents()

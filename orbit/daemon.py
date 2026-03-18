@@ -10,7 +10,7 @@ from pathlib import Path
 class OculOSManager:
     def __init__(
         self,
-        binary_path: str=None,
+        binary_path: str = r"C:\Users\aadya\Desktop\oculos\target\release\oculos.exe",
         verbose: bool = False,
     ):
         """Manages the lifecycle of the OculOS background daemon."""
@@ -22,7 +22,7 @@ class OculOSManager:
             else:
                 candidate = here / "_bin" / "oculos"
             binary_path = str(candidate)
-        
+
         self.binary_path = Path(binary_path).resolve()
         self.process = None
         self.base_url = "http://127.0.0.1:7878"

@@ -10,7 +10,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from google.adk.artifacts import InMemoryArtifactService
 
-from .agents import parent_agent
+from .agents import build_agents
 from .daemon import OculOSManager
 from ._tools.hitl import APPROVAL_TOOLS
 from ._ui import default_human_in_the_loop
@@ -128,12 +128,16 @@ class Agent:
         self,
         task: str,
         llm: str = "gemini-3-pro-preview",
+        desktop_llm: Optional[str] = None,
+        planner_llm: Optional[str] = None,
         measure_latency: bool = True,
         verbose: bool = False,
         human_in_the_loop: Optional[HumanInTheLoopHandler] = None,
     ):
         self.task = task
         self.llm = llm
+        self.desktop_llm = desktop_llm
+        self.planner_llm = planner_llm
         self.measure_latency = measure_latency
         self.verbose = verbose
         self._human_in_the_loop = human_in_the_loop
@@ -155,6 +159,28 @@ class Agent:
         session = await session_service.create_session(
             app_name="desktop_app", user_id="local_admin", session_id="session_001"
         )
+
+        # Allow callers to provide separate model strings for planner vs desktop.
+        # If not provided, use `llm` for both for backwards compatibility.
+        # LiteLLM model strings are typically provider-prefixed (`provider/model-name`).
+        # Your existing wrapper `llm` default is often a raw Gemini name, so we only
+        # override desktop/planner models from `self.llm` when it looks LiteLLM-compatible
+        # (contains a '/'); otherwise we let build_agents fall back to its defaults.
+        desktop_model = self.desktop_llm
+        planner_model = self.planner_llm
+        if desktop_model is None and "/" in (self.llm or ""):
+            desktop_model = self.llm
+        if planner_model is None and "/" in (self.llm or ""):
+            planner_model = self.llm
+
+        build_kwargs: dict[str, str] = {}
+        if desktop_model is not None:
+            build_kwargs["desktop_model"] = desktop_model
+        if planner_model is not None:
+            build_kwargs["planner_model"] = planner_model
+
+        parent_agent, _desktop_agent = build_agents(**build_kwargs)
+
         runner = Runner(
             agent=parent_agent,
             app_name="desktop_app",
