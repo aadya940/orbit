@@ -37,6 +37,7 @@ async def wait_for_element(
     query: str,
     timeout: int = 3,
     interval: float = 0.5,
+    max_polls: Optional[int] = None,
     element_type: Optional[str] = None,
     interactive: Optional[bool] = None,
 ) -> Dict[str, Any]:
@@ -62,7 +63,9 @@ async def wait_for_element(
     last_result: Optional[Dict[str, Any]] = None
     query_lower = query.lower() if query else ""
 
-    while time.perf_counter() - start < timeout:
+    while time.perf_counter() - start < timeout and (
+        max_polls is None or polls_done < max_polls
+    ):
         result = find_ui_elements(
             pid,
             query=query,
@@ -82,7 +85,9 @@ async def wait_for_element(
                 "polls_done": polls_done,
             }
 
-        if query_lower and query != query_lower:
+        if query_lower and query != query_lower and (
+            max_polls is None or polls_done < max_polls
+        ):
             result = find_ui_elements(
                 pid,
                 query=query_lower,
@@ -101,7 +106,8 @@ async def wait_for_element(
                     "polls_done": polls_done,
                 }
 
-        await asyncio.sleep(0)
+        # Yield to the event loop; spacing polls avoids hot-looping when an element is absent.
+        await asyncio.sleep(interval if interval and interval > 0 else 0)
 
     elapsed = time.perf_counter() - start
     timeout_message = (

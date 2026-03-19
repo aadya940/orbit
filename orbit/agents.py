@@ -8,6 +8,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.exit_loop_tool import exit_loop
+from typing import Optional
 
 from .prompts import SYSTEM_PROMPT, PARENT_SYSTEM_PROMPT, VERIFIER_SYSTEM_PROMPT
 from ._tools.ui import (
@@ -279,11 +280,14 @@ def build_agents(
     *,
     desktop_model: str = DEFAULT_DESKTOP_MODEL,
     planner_model: str = DEFAULT_PLANNER_MODEL,
+    verifier_model: Optional[str] = None,
     max_retries_per_step: int = 3,
 ) -> tuple[Agent, Agent]:
     """Return (parent_agent, desktop_agent) for the requested model strings."""
     desktop_executor = build_desktop_agent(desktop_model)
-    verifier_agent = build_verifier_agent(planner_model)
+    if verifier_model is None:
+        verifier_model = planner_model
+    verifier_agent = build_verifier_agent(verifier_model)
 
     loop_desktop_agent = LoopAgent(
         name=LOOP_DESKTOP_AGENT_NAME,

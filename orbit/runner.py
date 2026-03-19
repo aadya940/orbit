@@ -223,6 +223,7 @@ class Agent:
         llm: str = "gemini-3-pro-preview",
         desktop_llm: Optional[str] = None,
         planner_llm: Optional[str] = None,
+        verifier_llm: Optional[str] = None,
         max_retries_per_step: int = 3,
         measure_latency: bool = True,
         verbose: bool = False,
@@ -232,6 +233,7 @@ class Agent:
         self.llm = llm
         self.desktop_llm = desktop_llm
         self.planner_llm = planner_llm
+        self.verifier_llm = verifier_llm
         self.max_retries_per_step = max_retries_per_step
         self.measure_latency = measure_latency
         self.verbose = verbose
@@ -273,12 +275,20 @@ class Agent:
             desktop_model = self.llm
         if planner_model is None and "/" in (self.llm or ""):
             planner_model = self.llm
+        verifier_model = self.verifier_llm
+        # Backwards compatible default:
+        # - If verifier_llm not provided, verifier should follow planner_llm.
+        # - If planner_llm is also unset, build_agents will fall back to defaults.
+        if verifier_model is None:
+            verifier_model = planner_model
 
         build_kwargs: dict[str, str] = {}
         if desktop_model is not None:
             build_kwargs["desktop_model"] = desktop_model
         if planner_model is not None:
             build_kwargs["planner_model"] = planner_model
+        if verifier_model is not None:
+            build_kwargs["verifier_model"] = verifier_model
 
         parent_agent, _desktop_agent = build_agents(
             **build_kwargs, max_retries_per_step=self.max_retries_per_step
