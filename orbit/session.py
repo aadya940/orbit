@@ -39,22 +39,28 @@ class Session:
         return self
 
     async def __aexit__(self, *exc):
-        self._daemon.stop()
+        try:
+            self._daemon.stop()
+        except Exception:
+            log.debug("Daemon shutdown failed; continuing.", exc_info=True)
         self._started = False
         # Show a completion toast only when the session exits cleanly after running tasks.
         if exc and exc[0] is None and self._adk_session is not None:
             try:
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(
-                    None,
-                    run_toast_ui,
-                    "completion",
-                    {
-                        "description": (
-                            "Orbit has finished all tasks. "
-                            "You can use your screen now."
-                        )
-                    },
+                await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        run_toast_ui,
+                        "completion",
+                        {
+                            "description": (
+                                "Orbit has finished all tasks. "
+                                "You can use your screen now."
+                            )
+                        },
+                    ),
+                    timeout=5,
                 )
             except Exception:
                 log.debug(

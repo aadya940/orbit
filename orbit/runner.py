@@ -1,5 +1,6 @@
 """Minimal Agent interface: Agent(llm=..., task=...)."""
 
+import asyncio
 import json
 import logging
 import re
@@ -131,6 +132,7 @@ class Agent:
         extra_info: Optional[str] = None,
         extra_tools: Optional[list] = None,
         human_in_the_loop: Optional[HumanInTheLoopHandler] = None,
+        timeout: Optional[int] = None,
     ):
         self.task = task
         self.extra_info = extra_info.strip() if isinstance(extra_info, str) else None
@@ -145,6 +147,7 @@ class Agent:
         self._output_schema = output_schema
         self._extra_tools = extra_tools or []
         self._human_in_the_loop = human_in_the_loop
+        self._timeout = timeout  # seconds; None = no timeout
         self._owns_session = False
 
         _setup_logging(verbose=verbose)
@@ -306,9 +309,20 @@ class Agent:
             self._latency.start_run()
         self._last_time = time.time()
 
-        try:
+        async def _consume_events():
             async for event in events:
                 self._dispatch_event(event)
+
+        try:
+            if self._timeout:
+                await asyncio.wait_for(_consume_events(), timeout=self._timeout)
+            else:
+                await _consume_events()
+        except asyncio.TimeoutError:
+            log.error("Global timeout (%ds) reached. Stopping agent.", self._timeout)
+            self._errors.append(
+                f"Global timeout ({self._timeout}s) reached. Agent stopped."
+            )
         except ClientError as e:
             log.error(
                 "Gemini API error at call %d: %s",

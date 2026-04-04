@@ -129,6 +129,20 @@ def find_installed_apps(query: str = "") -> Dict[str, Any]:
         # Deduplicate and sort
         found = sorted(set(found))
 
+        # If the caller asked for browsers but none were found, say so explicitly.
+        _browser_keywords = {"browser", "chrome", "firefox", "chromium", "brave"}
+        if query and query.lower() in _browser_keywords and not found:
+            return {
+                "status": "success",
+                "os": system,
+                "apps": [],
+                "note": (
+                    "No working browser found on this system. "
+                    "Do NOT attempt to launch a browser. "
+                    "Call request_human to ask the user to install one."
+                ),
+            }
+
         return {
             "status": "success",
             "os": system,

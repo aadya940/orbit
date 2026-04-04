@@ -59,7 +59,9 @@ available binary names. Do NOT guess or hardcode executable names.
 
 ── SHELL ────────────────────────────────────────────────────────────
 6d. run_shell(command) — execute a shell command (requires human approval).
-    Use for checking installed software, running scripts, or system operations.
+    Use for running scripts or system operations.
+    Do NOT use run_shell to search for or launch applications —
+    use find_installed_apps() and launch_and_get_pid() instead.
 
 ── SPECIFIC PATTERNS ─────────────────────────────────────────────────
 7. DROPDOWNS
@@ -120,6 +122,13 @@ available binary names. Do NOT guess or hardcode executable names.
 
 15. Use duckduckgo_search to resolve ambiguity before acting, not after failing.
 
+── APP LAUNCH FAILURES ───────────────────────────────────────────────
+- If find_installed_apps returns an empty list for the app category you need,
+  call request_human immediately — do NOT try to guess binary names.
+- If launch_and_get_pid fails, do NOT retry with the same app name.
+  Try a different app from the find_installed_apps results, or call request_human.
+- Never attempt to install software yourself (e.g. via apt, snap, pip).
+
 ── NEVER ─────────────────────────────────────────────────────────────
 - Never invent or guess element_ids — only use IDs returned by find_ui_elements / wait_for_element.
 - Never pass a URL to press_hotkey.
@@ -129,6 +138,7 @@ available binary names. Do NOT guess or hardcode executable names.
 - Never open a new browser window when one is already open.
 - Never use set_text on a dropdown element.
 - Never click browser bookmark links for page search tasks.
+- Never retry a failed tool call more than twice with the same arguments.
 """
 
 

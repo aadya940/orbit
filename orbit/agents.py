@@ -104,18 +104,24 @@ def make_lite_llm(model: str):
 
 
 _BUDGET_WARNING_THRESHOLD = 5  # Warn when this many calls remain.
+_LOOP_WINDOW = 10  # Look at last N tool calls for repetition.
+_LOOP_THRESHOLD = 3  # Same tool+args returning error this many times → loop.
 
 
 def make_inject_screenshot_callback(
     *, max_calls: int, budget_counter: Optional[dict[str, int]] = None
 ):
+    # Closure state for loop detection: only tracks calls that returned errors.
+    _failed_calls: list[str] = []
+
     async def _inject_screenshot_callback(
         callback_context: CallbackContext, llm_request: LlmRequest
     ) -> Optional[LlmResponse]:
         """
         Before each desktop agent LLM call:
         1. Track call count; hard-stop when budget exhausted, warn when running low.
-        2. Inject screenshot artifacts as inline images.
+        2. Detect tool-call loops and inject recovery hint.
+        3. Inject screenshot artifacts as inline images.
         """
         # ── Budget tracking ────────────────────────────────────────────
         # Keep this per-run using a closure-backed counter. This avoids relying on
@@ -133,6 +139,33 @@ def make_inject_screenshot_callback(
             callback_context.state["temp:orbit_call_count"] = call_num
 
         remaining = max(0, int(max_calls) - call_num)
+
+        # ── Log recent tool calls ─────────────────────────────────────
+        # ADK does not stream sub-agent events, so the runner can't log
+        # desktop agent tool calls. We log them here instead.
+        if llm_request.contents:
+            for c in llm_request.contents[-2:]:
+                for p in c.parts or []:
+                    fc = getattr(p, "function_call", None)
+                    if fc and fc.name:
+                        args_summary = str(dict(fc.args))[:200] if fc.args else "{}"
+                        log.info(
+                            "[call %d/%d] %s(%s)",
+                            call_num,
+                            max_calls,
+                            fc.name,
+                            args_summary,
+                        )
+                    fr = getattr(p, "function_response", None)
+                    if fr and fr.name:
+                        resp_summary = str(fr.response)[:200] if fr.response else ""
+                        log.info(
+                            "[call %d/%d] %s -> %s",
+                            call_num,
+                            max_calls,
+                            fr.name,
+                            resp_summary,
+                        )
 
         # Hard-stop: return a canned response so the LLM is never called.
         if remaining <= 0:
@@ -163,6 +196,49 @@ def make_inject_screenshot_callback(
                 llm_request.contents.append(
                     types.Content(role="user", parts=[budget_part])
                 )
+
+        # ── Loop detection ─────────────────────────────────────────
+        # Only track tool calls that returned errors. Successful repeated calls
+        # (e.g. find_ui_elements with different queries, interact_with_element
+        # for each form field) are normal and should NOT trigger this.
+        if llm_request.contents:
+            for c in llm_request.contents[-3:]:
+                for p in c.parts or []:
+                    fr = getattr(p, "function_response", None)
+                    if fr and fr.response and isinstance(fr.response, dict):
+                        if fr.response.get("status") == "error":
+                            _failed_calls.append(fr.name)
+            # Trim so we don't leak memory.
+            del _failed_calls[: max(0, len(_failed_calls) - _LOOP_WINDOW * 2)]
+
+            window = _failed_calls[-_LOOP_WINDOW:]
+            if len(window) >= _LOOP_THRESHOLD:
+                from collections import Counter
+
+                top_call, top_count = Counter(window).most_common(1)[0]
+                if top_count >= _LOOP_THRESHOLD:
+                    log.warning(
+                        "Loop detected: %s failed %d times in recent window. Injecting recovery hint.",
+                        top_call,
+                        top_count,
+                    )
+                    hint = types.Part(
+                        text=(
+                            f"[LOOP DETECTED] '{top_call}' has failed {top_count} times. "
+                            "This approach is not working. STOP retrying and either: "
+                            "(1) try a completely different approach, or "
+                            "(2) call request_human to ask for help. "
+                            "Do NOT call the same tool with the same arguments again."
+                        )
+                    )
+                    last = llm_request.contents[-1]
+                    if last.role == "user" and last.parts:
+                        last.parts.append(hint)
+                    else:
+                        llm_request.contents.append(
+                            types.Content(role="user", parts=[hint])
+                        )
+                    _failed_calls.clear()
 
         # ── Truncate oversized function responses ──────────────────
         # Large accessibility tree / element dumps can cause Gemini

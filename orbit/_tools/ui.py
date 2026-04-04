@@ -926,10 +926,21 @@ async def launch_and_get_pid(app_name: str) -> Dict[str, Any]:
             await asyncio.sleep(0)
         return {
             "status": "error",
-            "message": f"App {app_name} did not appear after launch.",
+            "message": (
+                f"App '{app_name}' did not appear after launch. "
+                "Do NOT retry with the same app name — it will fail again. "
+                "Try a different application, or call request_human if no alternative exists."
+            ),
         }
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "error",
+            "message": (
+                f"Failed to launch '{app_name}': {e}. "
+                "Do NOT retry with the same app name — it will fail again. "
+                "Try a different application, or call request_human if no alternative exists."
+            ),
+        }
 
 
 async def take_screenshot(tool_context: ToolContext) -> Dict[str, Any]:
