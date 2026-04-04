@@ -35,6 +35,8 @@ from ._tools.ui import (
     select_dropdown_option,
     select_option_by_label,
     get_popuphost_menu_window,
+    get_page_text,
+    wait_for_text,
 )
 from ._tools.clipboard import (
     clipboard_get,
@@ -43,6 +45,7 @@ from ._tools.clipboard import (
 from ._tools.search import duckduckgo_search
 from ._tools.filesystem import (
     get_system_info,
+    find_installed_apps,
     read_file,
     read_pdf,
     read_csv,
@@ -64,6 +67,7 @@ from ._tools.hitl import (
     create_directory as create_directory_approval,
     upload_file as upload_file_approval,
     request_human,
+    run_shell as run_shell_approval,
 )
 from ._tools.hotkey import press_hotkey
 
@@ -305,6 +309,7 @@ def build_desktop_agent(
             create_directory_approval,
             find_in_file,
             get_system_info,
+            find_installed_apps,
             press_hotkey,
             navigate_to_url,
             launch_and_get_pid,
@@ -312,6 +317,9 @@ def build_desktop_agent(
             get_popuphost_menu_window,
             upload_file_approval,
             request_human,
+            get_page_text,
+            wait_for_text,
+            run_shell_approval,
         ]
         + (extra_tools or []),
     )

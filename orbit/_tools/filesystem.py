@@ -40,6 +40,105 @@ def get_system_info() -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
+def find_installed_apps(query: str = "") -> Dict[str, Any]:
+    """
+    Discover installed applications on this system.
+    Pass a query like 'browser' or 'chrome' to filter results,
+    or leave empty to list common apps.
+
+    Returns a list of executable names that can be passed to
+    launch_and_get_pid(). Always call this before launching an app
+    — never guess binary names.
+    """
+    try:
+        system = platform.system()
+        found = []
+
+        if system == "Windows":
+            # Search common install locations and PATH
+            search_dirs = []
+            for env_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+                d = os.environ.get(env_var)
+                if d:
+                    search_dirs.append(d)
+            # Also check PATH
+            path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+
+            # Well-known Windows app patterns
+            patterns = {
+                "browser": ["chrome.exe", "firefox.exe", "msedge.exe", "brave.exe"],
+                "editor": ["notepad.exe", "code.exe", "notepad++.exe"],
+                "terminal": ["cmd.exe", "powershell.exe", "wt.exe"],
+                "file": ["explorer.exe"],
+            }
+            candidates = set()
+            for names in patterns.values():
+                candidates.update(names)
+
+            for name in candidates:
+                if shutil.which(name):
+                    found.append(name)
+                else:
+                    for d in search_dirs:
+                        for root, _, files in os.walk(d):
+                            if name.lower() in (f.lower() for f in files):
+                                found.append(name)
+                                break
+                        else:
+                            continue
+                        break
+
+        elif system == "Darwin":
+            # Check /Applications for .app bundles
+            apps_dir = "/Applications"
+            if os.path.isdir(apps_dir):
+                for entry in os.listdir(apps_dir):
+                    if entry.endswith(".app"):
+                        found.append(entry.replace(".app", ""))
+            # Also check common CLI binaries
+            for name in ("google-chrome", "firefox", "safari", "code", "terminal"):
+                if shutil.which(name):
+                    found.append(name)
+
+        else:  # Linux
+            # Check which common binaries exist
+            common = [
+                "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+                "firefox", "firefox-esr", "brave-browser",
+                "code", "gedit", "nano", "vim",
+                "nautilus", "thunar", "nemo",
+                "xterm", "gnome-terminal", "konsole",
+                "libreoffice", "gimp", "vlc",
+            ]
+            for name in common:
+                if shutil.which(name):
+                    found.append(name)
+            # Also scan /usr/share/applications for .desktop files
+            desktop_dirs = ["/usr/share/applications", os.path.expanduser("~/.local/share/applications")]
+            for d in desktop_dirs:
+                if os.path.isdir(d):
+                    for f in os.listdir(d):
+                        if f.endswith(".desktop"):
+                            found.append(f.replace(".desktop", ""))
+
+        # Filter by query if provided
+        if query:
+            q = query.lower()
+            found = [a for a in found if q in a.lower()]
+
+        # Deduplicate and sort
+        found = sorted(set(found))
+
+        return {
+            "status": "success",
+            "os": system,
+            "apps": found,
+            "note": "Use these exact names with launch_and_get_pid().",
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 def read_file(path: str) -> Dict[str, Any]:
     """Reads the content of a text file."""
     try:

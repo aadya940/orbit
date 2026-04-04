@@ -134,6 +134,51 @@ async def request_human(
     return {"status": "rejected", "message": result.get("message", "Cancelled")}
 
 
+def _run_shell_impl(command: str, timeout: int = 30) -> Dict[str, Any]:
+    """Execute a shell command and return its output."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = result.stdout
+        if len(output) > 10000:
+            output = output[:10000] + "\n...[TRUNCATED]"
+        stderr = result.stderr
+        if len(stderr) > 3000:
+            stderr = stderr[:3000] + "\n...[TRUNCATED]"
+        return {
+            "status": "success" if result.returncode == 0 else "error",
+            "returncode": result.returncode,
+            "stdout": output,
+            "stderr": stderr,
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "message": f"Command timed out after {timeout}s."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def run_shell(command: str, timeout: int = 30) -> Dict[str, Any]:
+    """
+    Execute a shell command and return stdout/stderr. Requires human approval.
+
+    Use this for tasks like: checking installed software, running scripts,
+    installing packages, listing processes, or any command-line operation.
+
+    Args:
+        command (str): The shell command to execute (e.g. 'ls -la', 'pip install requests').
+        timeout (int): Maximum seconds to wait for the command to complete (default: 30).
+    """
+    return await _confirm_and_run(
+        "run_shell", _run_shell_impl, command=command, timeout=timeout
+    )
+
+
 # Registry kept for backwards compat / runner reference.
 APPROVAL_TOOLS: Dict[str, Callable[..., Any]] = {
     "write_file": _fs.write_file,

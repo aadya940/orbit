@@ -1191,3 +1191,78 @@ def select_option_by_label(pid: int, label_text: str) -> Dict[str, Any]:
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def _collect_text(node: dict) -> list[str]:
+    """Recursively collect all text content from an accessibility tree node."""
+    texts = []
+    for key in ("name", "title", "text_content", "value"):
+        val = node.get(key)
+        if val and isinstance(val, str) and val.strip():
+            texts.append(val.strip())
+    for child in node.get("children", []):
+        texts.extend(_collect_text(child))
+    return texts
+
+
+def get_page_text(pid: int) -> Dict[str, Any]:
+    """
+    Extract all visible text from a window as a single string.
+
+    This is much faster and cheaper than get_window_tree when you only need
+    the text content (not element IDs or structure). Useful for reading page
+    content, verifying text is present, or extracting data.
+
+    Args:
+        pid (int): The Process ID of the window.
+    """
+    try:
+        raw_tree = oculos_client.get_tree(pid)
+        all_texts = _collect_text(raw_tree)
+        # Deduplicate adjacent repeated strings (common in a11y trees)
+        deduped = []
+        for t in all_texts:
+            if not deduped or t != deduped[-1]:
+                deduped.append(t)
+        text = "\n".join(deduped)
+        # Truncate to avoid blowing up context
+        if len(text) > 15000:
+            text = text[:15000] + "\n...[TRUNCATED]"
+        return {"status": "success", "text": text, "length": len(text)}
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to get page text: {str(e)}"}
+
+
+async def wait_for_text(pid: int, text: str, timeout: int = 10) -> Dict[str, Any]:
+    """
+    Wait until specific text appears on screen in the given window.
+
+    Polls the accessibility tree every ~1 second until the text is found
+    or the timeout is reached. More efficient than the agent taking repeated
+    screenshots to check for text.
+
+    Args:
+        pid (int): The Process ID of the window to watch.
+        text (str): The text to wait for (case-insensitive substring match).
+        timeout (int): Maximum seconds to wait (default: 10).
+    """
+    try:
+        text_lower = text.lower()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            raw_tree = oculos_client.get_tree(pid)
+            all_text = "\n".join(_collect_text(raw_tree)).lower()
+            if text_lower in all_text:
+                return {
+                    "status": "success",
+                    "found": True,
+                    "message": f"Text '{text}' appeared on screen.",
+                }
+            await asyncio.sleep(1.0)
+        return {
+            "status": "success",
+            "found": False,
+            "message": f"Text '{text}' did not appear within {timeout}s.",
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
