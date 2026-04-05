@@ -1,3 +1,4 @@
 [submodule "oculos"]
 	path = oculos
 	url = https://github.com/aadya940/oculos
+	branch = main
