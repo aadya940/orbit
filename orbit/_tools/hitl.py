@@ -112,16 +112,8 @@ async def request_human(
     Use when automation has failed or the task requires human intervention.
     """
     ctx = context or {}
-    require_ui = bool(
-        ctx.get("require_confirmation")
-        or ctx.get("requires_human")
-        or ctx.get("blocked")
-    )
-    if not require_ui:
-        return {
-            "status": "completed",
-            "message": "No human action required.",
-        }
+    # Always show the toast when the agent asks for help. The description
+    # alone is reason enough — no special context keys required.
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         _toast_pool,

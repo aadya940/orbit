@@ -121,33 +121,33 @@ def find_installed_apps(query: str = "") -> Dict[str, Any]:
                         if f.endswith(".desktop"):
                             found.append(f.replace(".desktop", ""))
 
-        # Filter by query if provided
+        # Filter by query if provided.
+        # Expand category keywords so e.g. "browser" matches "firefox", "chrome", etc.
+        _CATEGORY_MAP = {
+            "browser": ["firefox", "chrome", "chromium", "brave", "edge", "safari"],
+            "editor": ["code", "gedit", "nano", "vim", "notepad", "sublime"],
+            "terminal": ["terminal", "konsole", "xterm", "cmd", "powershell", "wt"],
+        }
         if query:
             q = query.lower()
-            found = [a for a in found if q in a.lower()]
+            synonyms = _CATEGORY_MAP.get(q, [])
+            if synonyms:
+                found = [a for a in found if any(s in a.lower() for s in synonyms)]
+            else:
+                found = [a for a in found if q in a.lower()]
 
         # Deduplicate and sort
         found = sorted(set(found))
-
-        # If the caller asked for browsers but none were found, say so explicitly.
-        _browser_keywords = {"browser", "chrome", "firefox", "chromium", "brave"}
-        if query and query.lower() in _browser_keywords and not found:
-            return {
-                "status": "success",
-                "os": system,
-                "apps": [],
-                "note": (
-                    "No working browser found on this system. "
-                    "Do NOT attempt to launch a browser. "
-                    "Call request_human to ask the user to install one."
-                ),
-            }
 
         return {
             "status": "success",
             "os": system,
             "apps": found,
-            "note": "Use these exact names with launch_and_get_pid().",
+            "note": (
+                "Use these exact names with launch_and_get_pid()."
+                if found
+                else f"No apps found matching '{query}'. Call request_human for help."
+            ),
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
