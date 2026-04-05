@@ -232,6 +232,11 @@ copy oculos\target\release\oculos.exe orbit\_bin\oculos.exe
 pip install .
 ```
 
+Also requires Tk GUI toolkit for tkinter python.
+```
+sudo apt install python3-tk
+```
+
 macOS users: grant accessibility permissions as described [here](https://github.com/huseyinstif/oculos?tab=readme-ov-file#macos-grant-accessibility-permission).
 
 </details>
