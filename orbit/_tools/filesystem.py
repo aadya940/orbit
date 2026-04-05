@@ -113,13 +113,40 @@ def find_installed_apps(query: str = "") -> Dict[str, Any]:
             for name in common:
                 if shutil.which(name):
                     found.append(name)
-            # Also scan /usr/share/applications for .desktop files
+            # Scan .desktop files and extract the real Exec= binary name.
             desktop_dirs = ["/usr/share/applications", os.path.expanduser("~/.local/share/applications")]
             for d in desktop_dirs:
-                if os.path.isdir(d):
-                    for f in os.listdir(d):
-                        if f.endswith(".desktop"):
-                            found.append(f.replace(".desktop", ""))
+                if not os.path.isdir(d):
+                    continue
+                for fname in os.listdir(d):
+                    if not fname.endswith(".desktop"):
+                        continue
+                    filepath = os.path.join(d, fname)
+                    try:
+                        with open(filepath, "r", encoding="utf-8", errors="ignore") as df:
+                            desktop_name = fname.replace(".desktop", "")
+                            exec_bin = None
+                            app_name_line = None
+                            for line in df:
+                                line = line.strip()
+                                if line.startswith("Exec="):
+                                    # Exec= can be "env VAR=x /usr/bin/foo --flag %U"
+                                    # Extract the actual binary (skip env vars)
+                                    parts = line[5:].split()
+                                    for part in parts:
+                                        if "=" in part or part == "env":
+                                            continue
+                                        exec_bin = os.path.basename(part)
+                                        break
+                                elif line.startswith("Name=") and not app_name_line:
+                                    app_name_line = line[5:]
+                            if exec_bin:
+                                found.append(exec_bin)
+                            else:
+                                # Fallback: use the .desktop basename
+                                found.append(desktop_name)
+                    except Exception:
+                        continue
 
         # Filter by query if provided.
         # Expand category keywords so e.g. "browser" matches "firefox", "chrome", etc.

@@ -917,13 +917,24 @@ def navigate_to_url(pid: int, url: str) -> Dict[str, Any]:
 
 async def launch_and_get_pid(app_name: str) -> Dict[str, Any]:
     try:
+        # Snapshot existing window PIDs so we can detect NEW ones.
+        before = list_active_windows()
+        before_pids = set()
+        if before["status"] == "success":
+            before_pids = {w["pid"] for w in before.get("windows", [])}
+
         manage_window(action="launch", app_name=app_name)
         deadline = time.time() + 10.0
         while time.time() < deadline:
             result = list_active_windows()
-            if result["status"] == "success" and result["windows"]:
-                return {"status": "success", "windows": result["windows"]}
-            await asyncio.sleep(0)
+            if result["status"] == "success":
+                new_windows = [
+                    w for w in result.get("windows", [])
+                    if w["pid"] not in before_pids
+                ]
+                if new_windows:
+                    return {"status": "success", "windows": result["windows"]}
+            await asyncio.sleep(0.5)
         return {
             "status": "error",
             "message": (
