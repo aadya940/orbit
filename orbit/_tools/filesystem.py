@@ -103,18 +103,35 @@ def find_installed_apps(query: str = "") -> Dict[str, Any]:
         else:  # Linux
             # Check which common binaries exist
             common = [
-                "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-                "firefox", "firefox-esr", "brave-browser",
-                "code", "gedit", "nano", "vim",
-                "nautilus", "thunar", "nemo",
-                "xterm", "gnome-terminal", "konsole",
-                "libreoffice", "gimp", "vlc",
+                "google-chrome",
+                "google-chrome-stable",
+                "chromium",
+                "chromium-browser",
+                "firefox",
+                "firefox-esr",
+                "brave-browser",
+                "code",
+                "gedit",
+                "nano",
+                "vim",
+                "nautilus",
+                "thunar",
+                "nemo",
+                "xterm",
+                "gnome-terminal",
+                "konsole",
+                "libreoffice",
+                "gimp",
+                "vlc",
             ]
             for name in common:
                 if shutil.which(name):
                     found.append(name)
             # Scan .desktop files and extract the real Exec= binary name.
-            desktop_dirs = ["/usr/share/applications", os.path.expanduser("~/.local/share/applications")]
+            desktop_dirs = [
+                "/usr/share/applications",
+                os.path.expanduser("~/.local/share/applications"),
+            ]
             for d in desktop_dirs:
                 if not os.path.isdir(d):
                     continue
@@ -123,7 +140,9 @@ def find_installed_apps(query: str = "") -> Dict[str, Any]:
                         continue
                     filepath = os.path.join(d, fname)
                     try:
-                        with open(filepath, "r", encoding="utf-8", errors="ignore") as df:
+                        with open(
+                            filepath, "r", encoding="utf-8", errors="ignore"
+                        ) as df:
                             desktop_name = fname.replace(".desktop", "")
                             exec_bin = None
                             app_name_line = None
