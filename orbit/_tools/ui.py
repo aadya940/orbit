@@ -301,6 +301,8 @@ def _get_launch_flags(name: str) -> str:
     ]
     if any(n in name.lower() for n in chromium_based):
         return "--force-renderer-accessibility --enable-accessibility"
+    if "firefox" in name.lower():
+        return "", {"GTK_MODULES": "gail:atk-bridge", "GNOME_ACCESSIBILITY": "1"}
     return ""
 
 
@@ -327,9 +329,10 @@ def manage_window(
             elif system == "Darwin":
                 subprocess.Popen(["open", "-a", app_name])
             else:  # Linux
-                flags = _get_launch_flags(app_name)
+                flags, env_vars = _get_launch_flags(app_name)
                 cmd = f"{app_name} {flags}".strip() if flags else app_name
-                subprocess.Popen(cmd, shell=True)
+                env = {**os.environ, **env_vars}
+                subprocess.Popen(cmd, shell=True, env=env)
 
             return {
                 "status": "success",
