@@ -32,7 +32,6 @@ def _require_pyautogui() -> None:
             f"(import error: {_PYAUTOGUI_IMPORT_ERROR!r})"
         )
 
-
 #
 # Speed: tiny TTL cache for discovery calls
 # -----------------------------------------
@@ -287,20 +286,12 @@ async def wait_for_element(
         ),
     }
 
-
 def _get_launch_flags(name: str) -> str:
-    chromium_based = [
-        "chrome",
-        "chromium",
-        "electron",
-        "vscode",
-        "code",
-        "slack",
-        "spotify",
-        "discord",
-    ]
+    chromium_based = ["chrome", "chromium", "electron", "vscode", "code", "slack", "spotify", "discord"]
     if any(n in name.lower() for n in chromium_based):
         return "--force-renderer-accessibility --enable-accessibility"
+    if "firefox" in name.lower():
+        return "", {"GTK_MODULES": "gail:atk-bridge", "GNOME_ACCESSIBILITY": "1"}
     return ""
 
 
@@ -327,9 +318,10 @@ def manage_window(
             elif system == "Darwin":
                 subprocess.Popen(["open", "-a", app_name])
             else:  # Linux
-                flags = _get_launch_flags(app_name)
+                flags, env_vars = _get_launch_flags(app_name)
                 cmd = f"{app_name} {flags}".strip() if flags else app_name
-                subprocess.Popen(cmd, shell=True)
+                env = {**os.environ, **env_vars}
+                subprocess.Popen(cmd, shell=True, env=env)
 
             return {
                 "status": "success",
@@ -934,29 +926,24 @@ def navigate_to_url(pid: int, url: str) -> Dict[str, Any]:
 
 async def launch_and_get_pid(app_name: str) -> Dict[str, Any]:
     try:
+        # Snapshot existing window PIDs so we can detect NEW ones.
         before = list_active_windows()
         before_pids = set()
         if before["status"] == "success":
             before_pids = {w["pid"] for w in before.get("windows", [])}
 
         manage_window(action="launch", app_name=app_name)
-
-        interval = 0.5
-        max_interval = 3.0
-        deadline = time.time() + 60.0
-
+        deadline = time.time() + 10.0
         while time.time() < deadline:
             result = list_active_windows()
             if result["status"] == "success":
                 new_windows = [
-                    w for w in result.get("windows", []) if w["pid"] not in before_pids
+                    w for w in result.get("windows", [])
+                    if w["pid"] not in before_pids
                 ]
                 if new_windows:
                     return {"status": "success", "windows": result["windows"]}
-
-            await asyncio.sleep(interval)
-            interval = min(interval * 1.5, max_interval)  # backoff
-
+            await asyncio.sleep(0.5)
         return {
             "status": "error",
             "message": (
@@ -991,10 +978,7 @@ async def take_screenshot(tool_context: ToolContext) -> Dict[str, Any]:
         screenshot.save(buffer, format="JPEG")
         image_bytes = buffer.getvalue()
         if len(image_bytes) < 100:
-            return {
-                "status": "error",
-                "message": "Screenshot encoding failed — empty or corrupt JPEG",
-            }
+            return {"status": "error", "message": "Screenshot encoding failed — empty or corrupt JPEG"}
 
         artifact = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
         await tool_context.save_artifact(filename="screenshot.jpg", artifact=artifact)
