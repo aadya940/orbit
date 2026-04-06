@@ -137,9 +137,7 @@ class OculOS:
     # ── Internals ──────────────────────────────────────────────
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
-        r = self._session.get(
-            f"{self.base_url}{path}", params=params, timeout=self._timeout
-        )
+        r = self._session.get(f"{self.base_url}{path}", params=params, timeout=self._timeout)
         try:
             body = r.json()
         except ValueError:
@@ -150,9 +148,7 @@ class OculOS:
         return body["data"]
 
     def _post(self, path: str, json: Optional[dict] = None) -> Any:
-        r = self._session.post(
-            f"{self.base_url}{path}", json=json, timeout=self._timeout
-        )
+        r = self._session.post(f"{self.base_url}{path}", json=json, timeout=self._timeout)
         try:
             body = r.json()
         except ValueError:
