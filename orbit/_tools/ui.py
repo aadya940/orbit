@@ -286,13 +286,13 @@ async def wait_for_element(
         ),
     }
 
-def _get_launch_flags(name: str) -> str:
+def _get_launch_flags(name: str) -> tuple[str, dict]:
     chromium_based = ["chrome", "chromium", "electron", "vscode", "code", "slack", "spotify", "discord"]
     if any(n in name.lower() for n in chromium_based):
-        return "--force-renderer-accessibility --enable-accessibility"
+        return "--force-renderer-accessibility --enable-accessibility --disable-gpu --no-sandbox", {}
     if "firefox" in name.lower():
         return "", {"GTK_MODULES": "gail:atk-bridge", "GNOME_ACCESSIBILITY": "1"}
-    return ""
+    return "", {}
 
 
 def manage_window(
