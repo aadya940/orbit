@@ -286,6 +286,12 @@ async def wait_for_element(
         ),
     }
 
+def _get_launch_flags(name: str) -> str:
+    chromium_based = ["chrome", "chromium", "electron", "vscode", "code", "slack", "spotify", "discord"]
+    if any(n in name.lower() for n in chromium_based):
+        return "--force-renderer-accessibility --enable-accessibility"
+    return ""
+
 
 def manage_window(
     action: str, pid: Optional[int] = None, app_name: Optional[str] = None
@@ -310,9 +316,9 @@ def manage_window(
             elif system == "Darwin":
                 subprocess.Popen(["open", "-a", app_name])
             else:  # Linux
-                subprocess.Popen(
-                    app_name, shell=True
-                )  # shell=True handles args in app_name string
+                flags = _get_launch_flags(app_name)
+                cmd = f"{app_name} {flags}".strip() if flags else app_name
+                subprocess.Popen(cmd, shell=True)
 
             return {
                 "status": "success",
