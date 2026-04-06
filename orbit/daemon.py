@@ -37,6 +37,28 @@ class OculOSManager:
         if not self.binary_path.exists():
             raise FileNotFoundError(f"OculOS binary not found at: {self.binary_path}")
 
+        # On Linux, ensure toolkit-accessibility is enabled so that apps like
+        # Chrome expose their full AT-SPI tree.  Without this, Chrome only
+        # returns ~5 top-level elements instead of the full DOM.
+        if os.name != "nt":
+            try:
+                subprocess.run(
+                    [
+                        "gsettings", "set",
+                        "org.gnome.desktop.interface",
+                        "toolkit-accessibility", "true",
+                    ],
+                    capture_output=True,
+                    timeout=5,
+                )
+                log.debug("Ensured toolkit-accessibility is enabled")
+            except FileNotFoundError:
+                log.debug("gsettings not found — skipping toolkit-accessibility check")
+            except subprocess.TimeoutExpired:
+                log.warning("gsettings timed out setting toolkit-accessibility")
+            except Exception as e:
+                log.debug("Could not set toolkit-accessibility: %s", e)
+
         log.info("Starting OculOS daemon...")
 
         self.process = subprocess.Popen(
