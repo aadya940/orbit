@@ -9,9 +9,10 @@ from typing import Any, Optional
 class OculOS:
     """Thin wrapper around the OculOS REST API."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:7878"):
+    def __init__(self, base_url: str = "http://127.0.0.1:7878", timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
         self._session = requests.Session()
+        self._timeout = timeout
 
     # ── Discovery ──────────────────────────────────────────────
 
@@ -136,7 +137,7 @@ class OculOS:
     # ── Internals ──────────────────────────────────────────────
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
-        r = self._session.get(f"{self.base_url}{path}", params=params)
+        r = self._session.get(f"{self.base_url}{path}", params=params, timeout=self._timeout)
         try:
             body = r.json()
         except ValueError:
@@ -147,7 +148,7 @@ class OculOS:
         return body["data"]
 
     def _post(self, path: str, json: Optional[dict] = None) -> Any:
-        r = self._session.post(f"{self.base_url}{path}", json=json)
+        r = self._session.post(f"{self.base_url}{path}", json=json, timeout=self._timeout)
         try:
             body = r.json()
         except ValueError:
