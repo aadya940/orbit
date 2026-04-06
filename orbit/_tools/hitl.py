@@ -129,6 +129,7 @@ async def request_human(
 def _run_shell_impl(command: str, timeout: int = 30) -> Dict[str, Any]:
     """Execute a shell command and return its output."""
     import subprocess
+
     try:
         result = subprocess.run(
             command,
