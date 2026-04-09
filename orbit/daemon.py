@@ -44,9 +44,11 @@ class OculOSManager:
             try:
                 subprocess.run(
                     [
-                        "gsettings", "set",
+                        "gsettings",
+                        "set",
                         "org.gnome.desktop.interface",
-                        "toolkit-accessibility", "true",
+                        "toolkit-accessibility",
+                        "true",
                     ],
                     capture_output=True,
                     timeout=5,

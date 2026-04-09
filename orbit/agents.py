@@ -69,7 +69,7 @@ from ._tools.hitl import (
     request_human,
     run_shell as run_shell_approval,
 )
-from ._tools.hotkey import press_hotkey
+from ._tools.hotkey import press_hotkey, type_text
 
 DEFAULT_DESKTOP_MODEL = "gemini-3-flash-preview"
 DEFAULT_PLANNER_MODEL = "gemini-3-flash-preview"
@@ -387,6 +387,7 @@ def build_desktop_agent(
             get_system_info,
             find_installed_apps,
             press_hotkey,
+            type_text,
             navigate_to_url,
             launch_and_get_pid,
             take_screenshot,
