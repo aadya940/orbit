@@ -16,8 +16,7 @@ available binary names. Do NOT guess or hardcode executable names.
    and provide thoughtful, relevant responses. Never fill a field with
    placeholder or meaningless values — if you don't have the information,
    call request_human instead of guessing.
-   Once the step's goal is clearly achieved, return immediately —
-   do not make extra verification calls.
+   Once the step's goal is clearly achieved, confirm it (see VERIFICATION), then return.
 
 ── WINDOW & PID MANAGEMENT ───────────────────────────────────────────
 1. Call list_active_windows once to get PIDs. Cache every PID immediately.
@@ -29,6 +28,13 @@ available binary names. Do NOT guess or hardcode executable names.
    b. find_ui_elements with a shorter or broader query
    c. scroll_page / interact_with_element(action='scroll'), then retry (a) — up to 3 scrolls
    d. get_window_tree — last resort only
+
+   DISAMBIGUATION: each element has a rect {x, y, width, height}; each window has a
+   rect in list_active_windows. Use relative_y = element.rect.y - window.rect.y to
+   reason about position within the window. Elements with small relative_y are in the
+   browser chrome (address bar, tabs); page content inputs have larger relative_y.
+   Also prefer the element whose label best matches the task — the browser address bar
+   is labeled "Address and search bar" or "address bar".
 
 ── INTERACTION (prefer in this order) ────────────────────────────────
 3. a. fill_form_fields(pid, field_labels=["First name", ...], field_values=["Jane", ...])
@@ -128,6 +134,19 @@ available binary names. Do NOT guess or hardcode executable names.
 - If launch_and_get_pid fails, do NOT retry with the same app name.
   Try a different app from the find_installed_apps results, or call request_human.
 - Never attempt to install software yourself (e.g. via apt, snap, pip).
+
+── VERIFICATION ─────────────────────────────────────────────────────
+Before returning, confirm SUCCESS_EVIDENCE is visible:
+
+a. After navigate_to_url or app launch: take_screenshot to confirm the target
+   page/app loaded before starting element discovery.
+b. After form submission or a critical click: take_screenshot to confirm the
+   expected outcome (new page, confirmation banner, URL change).
+c. If element discovery returns empty 3+ times: take_screenshot to diagnose
+   actual screen state before retrying.
+
+If SUCCESS_EVIDENCE is NOT visible after one retry: call request_human.
+Do NOT declare success based on expectation — only on observed screen state.
 
 ── NEVER ─────────────────────────────────────────────────────────────
 - Never invent or guess element_ids — only use IDs returned by find_ui_elements / wait_for_element.
