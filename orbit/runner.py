@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
@@ -20,6 +20,7 @@ from .agents import (
     build_agents,
     DESKTOP_EXECUTOR_AGENT_NAME,
 )
+from ._tools.hitl import set_hitl_enabled as _set_hitl_enabled
 from .daemon import OculOSManager
 from ._ui.console import OrbitConsole
 from .journal import Journal
@@ -111,9 +112,6 @@ class _LatencyTracker:
         }
 
 
-HumanInTheLoopHandler = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
-
-
 class Agent:
     """Orbit agent. Pass llm (model name) and task, then await `agent.run`."""
 
@@ -131,7 +129,7 @@ class Agent:
         output_schema: Optional[Any] = None,
         extra_info: Optional[str] = None,
         extra_tools: Optional[list] = None,
-        human_in_the_loop: Optional[HumanInTheLoopHandler] = None,
+        human_in_the_loop: bool = True,
         timeout: Optional[int] = None,
         pause_event: Optional[asyncio.Event] = None,
     ):
@@ -147,7 +145,7 @@ class Agent:
         self._session = session
         self._output_schema = output_schema
         self._extra_tools = extra_tools or []
-        self._human_in_the_loop = human_in_the_loop
+        self._human_in_the_loop: bool = bool(human_in_the_loop)
         self._timeout = timeout  # seconds; None = no timeout
         self._pause_event = pause_event
         self._owns_session = False
@@ -193,6 +191,7 @@ class Agent:
     # ── Core orchestration ────────────────────────────────────────
 
     async def _run(self) -> RunResult:
+        _set_hitl_enabled(self._human_in_the_loop)
         prompt = self._compose_prompt(self.task, self.extra_info)
         self._ui = OrbitConsole(verbose=self.verbose)
         self._ui.task_start(prompt)
