@@ -166,6 +166,8 @@ def _slim_element(el: dict) -> dict:
             slim[key] = val
     if el.get("is_enabled") is False:
         slim["is_enabled"] = False
+    if el.get("rect"):
+        slim["rect"] = el["rect"]
     return slim
 
 
@@ -966,9 +968,11 @@ async def launch_and_get_pid(app_name: str) -> Dict[str, Any]:
 async def take_screenshot(tool_context: ToolContext) -> Dict[str, Any]:
     """
     Takes a screenshot of the current screen for visual analysis.
-    Use this when accessibility tools fail to find an element.
-    After calling this, analyze the image and then continue using standard UI tools
-    (find_ui_elements / get_window_tree / interact_with_element) to act.
+    Use after navigation, form submission, or any critical state transition to
+    confirm the expected screen state before proceeding. Also use when multiple
+    similar elements need spatial disambiguation, or when element discovery returns
+    unexpected results. After calling this, analyze the image and continue using
+    standard UI tools (find_ui_elements / get_window_tree / interact_with_element) to act.
     """
     try:
         _require_pyautogui()
