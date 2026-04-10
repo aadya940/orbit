@@ -191,6 +191,9 @@ def run_toast_ui(kind: str, context: dict[str, Any]) -> dict[str, Any]:
     root.deiconify()
     root.lift()
     root.focus_force()
+    # Completion toasts are informational — auto-dismiss after 3 s.
+    if kind == "completion":
+        root.after(3000, done)
     try:
         root.mainloop()
     except Exception:

@@ -10,6 +10,15 @@ from .._ui.toast import run_toast_ui
 # Single-thread executor so tkinter toasts never overlap.
 _toast_pool = ThreadPoolExecutor(max_workers=1)
 
+# When False, all approval gates are bypassed and tools run autonomously.
+# Set via set_hitl_enabled() before each agent run.
+_hitl_enabled: bool = True
+
+
+def set_hitl_enabled(enabled: bool) -> None:
+    global _hitl_enabled
+    _hitl_enabled = enabled
+
 
 async def _confirm_and_run(
     tool: str,
@@ -19,7 +28,16 @@ async def _confirm_and_run(
     """
     Async HITL approval: runs the tkinter toast on a dedicated thread
     (safe on Windows), then executes impl (sync or async).
+    When _hitl_enabled is False, skips approval and runs directly.
     """
+    if not _hitl_enabled:
+        try:
+            if asyncio.iscoroutinefunction(impl):
+                return await impl(**kwargs)
+            return impl(**kwargs)
+        except Exception as e:
+            return {"status": "error", "message": str(e), "tool": tool}
+
     loop = asyncio.get_running_loop()
     decision = await loop.run_in_executor(
         _toast_pool,
@@ -111,6 +129,9 @@ async def request_human(
     Ask a human to complete something the agent cannot do (e.g. CAPTCHA, login, or a blocked step).
     Use when automation has failed or the task requires human intervention.
     """
+    if not _hitl_enabled:
+        return {"status": "completed", "message": "Autonomous mode — proceeding without human input."}
+
     ctx = context or {}
     # Always show the toast when the agent asks for help. The description
     # alone is reason enough — no special context keys required.

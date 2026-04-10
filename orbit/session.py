@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import os
+import sys
 from typing import Optional
 
 from google.adk.sessions import InMemorySessionService
@@ -44,8 +46,14 @@ class Session:
         except Exception:
             log.debug("Daemon shutdown failed; continuing.", exc_info=True)
         self._started = False
-        # Show a completion toast only when the session exits cleanly after running tasks.
-        if exc and exc[0] is None and self._adk_session is not None:
+        # Show a completion toast only when the session exits cleanly after running tasks,
+        # and only when a display is available (skip in headless/Docker environments).
+        has_display = (
+            sys.platform == "win32"
+            or bool(os.environ.get("DISPLAY"))
+            or bool(os.environ.get("WAYLAND_DISPLAY"))
+        )
+        if exc and exc[0] is None and self._adk_session is not None and has_display:
             try:
                 loop = asyncio.get_running_loop()
                 await asyncio.wait_for(

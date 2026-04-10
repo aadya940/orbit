@@ -40,6 +40,7 @@ class BaseActionAgent(ABC):
         verbose: bool = False,
         extra_info: Optional[str] = None,
         extra_tools: Optional[list] = None,
+        human_in_the_loop: bool = True,
         **kwargs,
     ):
         self._session = session
@@ -50,6 +51,7 @@ class BaseActionAgent(ABC):
         self._verbose = verbose
         self._extra_info = extra_info
         self._extra_tools = extra_tools or []
+        self._human_in_the_loop = human_in_the_loop
         self._kwargs = kwargs
 
     @abstractmethod
@@ -73,6 +75,7 @@ class BaseActionAgent(ABC):
             output_schema=self.output_schema(),
             extra_info=self._extra_info,
             extra_tools=self._extra_tools,
+            human_in_the_loop=self._human_in_the_loop,
             **self._kwargs,
         )
         return await agent.run()
