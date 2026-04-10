@@ -109,7 +109,10 @@ _LOOP_THRESHOLD = 3  # Same tool+args returning error this many times → loop.
 
 
 def make_inject_screenshot_callback(
-    *, max_calls: int, budget_counter: Optional[dict[str, int]] = None
+    *,
+    max_calls: int,
+    budget_counter: Optional[dict[str, int]] = None,
+    pause_event=None,
 ):
     # Closure state for loop detection: only tracks calls that returned errors.
     _failed_calls: list[str] = []
@@ -123,6 +126,10 @@ def make_inject_screenshot_callback(
         2. Detect tool-call loops and inject recovery hint.
         3. Inject screenshot artifacts as inline images.
         """
+        # Triggers the pause event.
+        if pause_event is not None:
+            await pause_event.wait()
+
         # ── Budget tracking ────────────────────────────────────────────
         # Keep this per-run using a closure-backed counter. This avoids relying on
         # direct Session.state mutations outside callback/tool context.
@@ -304,6 +311,15 @@ def make_inject_screenshot_callback(
     return _inject_screenshot_callback
 
 
+def make_planner_callback(pause_event=None):
+    async def _planner_callback(callback_context, llm_request):
+        if pause_event is not None:
+            await pause_event.wait()
+        return None
+
+    return _planner_callback
+
+
 def capture_phase_instruction_before_agent_callback(
     callback_context: CallbackContext,
 ) -> None:
@@ -334,6 +350,7 @@ def build_desktop_agent(
     budget_counter: Optional[dict[str, int]] = None,
     output_schema: Optional[type] = None,
     output_key: Optional[str] = None,
+    pause_event=None,
 ) -> Agent:
     kwargs: dict[str, Any] = dict(
         model=make_lite_llm(desktop_model),
@@ -346,6 +363,7 @@ def build_desktop_agent(
         before_model_callback=make_inject_screenshot_callback(
             max_calls=max_calls,
             budget_counter=budget_counter,
+            pause_event=pause_event,
         ),
         before_agent_callback=capture_phase_instruction_before_agent_callback,
         tools=[
@@ -412,6 +430,7 @@ def build_parent_agent(
     desktop_agent: Agent,
     output_schema: Optional[type] = None,
     output_key: Optional[str] = None,
+    pause_event=None,
 ) -> Agent:
     desktop_tool = AgentTool(desktop_agent)
     kwargs: dict[str, Any] = dict(
@@ -422,6 +441,7 @@ def build_parent_agent(
         This agent is responsible for breaking down the user's goal into clear phases and delegating the tasks to the desktop_agent tool.""",
         instruction=parent_prompt_provider,
         tools=[duckduckgo_search, desktop_tool],
+        before_model_callback=make_planner_callback(pause_event),
     )
     if output_schema is not None:
         kwargs["output_schema"] = output_schema
@@ -440,6 +460,7 @@ def build_agents(
     max_calls: int = 30,
     budget_counter: Optional[dict[str, int]] = None,
     output_key: Optional[str] = None,
+    pause_event=None,
 ) -> tuple[Agent, Agent]:
     """Return (root_agent, desktop_agent) for the requested model strings."""
     desktop_agent = build_desktop_agent(
@@ -449,6 +470,7 @@ def build_agents(
         budget_counter=budget_counter,
         output_schema=output_schema if not planner else None,
         output_key=output_key if not planner else None,
+        pause_event=pause_event,
     )
     if planner:
         root_agent = build_parent_agent(
@@ -456,6 +478,7 @@ def build_agents(
             desktop_agent,
             output_schema=output_schema,
             output_key=output_key,
+            pause_event=pause_event,
         )
     else:
         root_agent = desktop_agent

@@ -133,6 +133,7 @@ class Agent:
         extra_tools: Optional[list] = None,
         human_in_the_loop: Optional[HumanInTheLoopHandler] = None,
         timeout: Optional[int] = None,
+        pause_event: Optional[asyncio.Event] = None,
     ):
         self.task = task
         self.extra_info = extra_info.strip() if isinstance(extra_info, str) else None
@@ -148,6 +149,7 @@ class Agent:
         self._extra_tools = extra_tools or []
         self._human_in_the_loop = human_in_the_loop
         self._timeout = timeout  # seconds; None = no timeout
+        self._pause_event = pause_event
         self._owns_session = False
 
         _setup_logging(verbose=verbose)
@@ -275,6 +277,7 @@ class Agent:
         self._budget_counter = {"call_count": 0}
         build_kwargs["max_calls"] = self.max_steps
         build_kwargs["budget_counter"] = self._budget_counter
+        build_kwargs["pause_event"] = self._pause_event
 
         root_agent, _desktop_agent = build_agents(**build_kwargs)
 
