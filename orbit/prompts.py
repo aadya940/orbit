@@ -29,7 +29,7 @@ available binary names. Do NOT guess or hardcode executable names.
    c. scroll_page / interact_with_element(action='scroll'), then retry (a) — up to 3 scrolls
    d. get_window_tree — last resort only
 
-   DISAMBIGUATION: each element has a rect {x, y, width, height}; each window has a
+   DISAMBIGUATION: each element has a rect {{x, y, width, height}}; each window has a
    rect in list_active_windows. Use relative_y = element.rect.y - window.rect.y to
    reason about position within the window. Elements with small relative_y are in the
    browser chrome (address bar, tabs); page content inputs have larger relative_y.
