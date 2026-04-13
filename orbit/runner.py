@@ -139,7 +139,7 @@ class Agent:
         measure_latency: bool = True,
         verbose: bool = False,
         log_file_path: Optional[str] = None,
-        max_steps: int = 30,
+        max_steps: Optional[int] = None,
         planner: bool = True,
         session: Optional[Any] = None,
         output_schema: Optional[Any] = None,
@@ -307,7 +307,8 @@ class Agent:
             build_kwargs["output_schema"] = self._output_schema
             build_kwargs["output_key"] = output_key
         self._budget_counter = {"call_count": 0}
-        build_kwargs["max_calls"] = self.max_steps
+        if self.max_steps is not None:
+            build_kwargs["max_calls"] = self.max_steps
         build_kwargs["budget_counter"] = self._budget_counter
         build_kwargs["pause_event"] = self._pause_event
 
@@ -422,7 +423,7 @@ class Agent:
         latency_summary = self._latency.summary() if self._latency else {}
         llm_calls_used = int(self._budget_counter.get("call_count", 0))
         latency_summary["llm_calls"] = llm_calls_used
-        latency_summary["max_llm_calls"] = self.max_steps
+        latency_summary["max_llm_calls"] = self.max_steps if self.max_steps is not None else "unlimited"
         if self._latency:
             self._ui.latency(latency_summary)
 
