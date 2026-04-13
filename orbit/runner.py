@@ -139,7 +139,7 @@ class Agent:
         measure_latency: bool = True,
         verbose: bool = False,
         log_file_path: Optional[str] = None,
-        max_steps: Optional[int] = None,
+        max_steps: Optional[int] = 40,
         planner: bool = True,
         session: Optional[Any] = None,
         output_schema: Optional[Any] = None,
