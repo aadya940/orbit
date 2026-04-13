@@ -128,7 +128,11 @@ available binary names. Do NOT guess or hardcode executable names.
     - You are genuinely uncertain what the task requires.
     Do not retry indefinitely.
 
-15. Use duckduckgo_search to resolve ambiguity before acting, not after failing.
+15. SEARCH: always call duckduckgo_search(query) directly for any web search task.
+    Never open a browser and navigate to a search engine to perform a search —
+    the tool is faster, cheaper, and does not require a browser window.
+    Only fall back to browser-based navigation when the task explicitly requires
+    interacting with a specific website (e.g. filling a form, clicking a link).
 
 ── APP LAUNCH FAILURES ───────────────────────────────────────────────
 - If find_installed_apps returns an empty list for the app category you need,
