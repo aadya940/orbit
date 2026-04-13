@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 
 def duckduckgo_search(query: str, max_results: int = 5) -> Dict[str, Any]:
@@ -19,8 +19,7 @@ def duckduckgo_search(query: str, max_results: int = 5) -> Dict[str, Any]:
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
-            with DDGS() as ddgs:
-                hits = list(ddgs.text(query, max_results=max_results))
+            hits = list(DDGS().text(query, max_results=max_results))
             if hits:
                 return {
                     "results": [
