@@ -147,42 +147,50 @@ def _cached_find_elements_hwnd(
     )
 
 
-def _screen_region(rect: dict) -> str:
-    """Convert absolute rect to a human-readable screen region label.
+def _screen_region(el_rect: dict, win_rect: Optional[dict] = None) -> str:
+    """Return a human-readable region label for an element relative to its window.
 
-    Divides the screen into a 3x3 grid using the VM's 1280x768 resolution.
-    Returns strings like 'top-left', 'center', 'bottom-right' so the LLM
-    can reason spatially without doing pixel arithmetic.
+    Divides the window (or screen as fallback) into a 3x3 grid and maps the
+    element's centre point to one of nine zone labels:
+      top-left    top-center    top-right
+      middle-left   center    middle-right
+      bottom-left bottom-center bottom-right
+
+    Using the window rect (not raw screen coords) means the label stays correct
+    regardless of window size, position, or whether the window is maximised.
+    Falls back to a 1280x768 screen grid when no window rect is available.
     """
-    x = rect.get("x", 0)
-    y = rect.get("y", 0)
-    w = rect.get("width", 0)
-    h = rect.get("height", 0)
-    cx = x + w / 2
-    cy = y + h / 2
+    ex = el_rect.get("x", 0)
+    ey = el_rect.get("y", 0)
+    ew = el_rect.get("width", 0)
+    eh = el_rect.get("height", 0)
 
-    # Horizontal thirds: 0-426 left, 427-853 center, 854+ right
-    if cx < 427:
-        col = "left"
-    elif cx < 854:
-        col = "center"
-    else:
-        col = "right"
+    # Element centre in screen coordinates
+    ecx = ex + ew / 2
+    ecy = ey + eh / 2
 
-    # Vertical thirds: 0-255 top, 256-511 middle, 512+ bottom
-    if cy < 256:
-        row = "top"
-    elif cy < 512:
-        row = "middle"
+    if win_rect:
+        wx = win_rect.get("x", 0)
+        wy = win_rect.get("y", 0)
+        ww = win_rect.get("width", 1280)
+        wh = win_rect.get("height", 768)
     else:
-        row = "bottom"
+        # Fallback: treat full screen as the reference frame
+        wx, wy, ww, wh = 0, 0, 1280, 768
+
+    # Element centre relative to window origin
+    rx = ecx - wx
+    ry = ecy - wy
+
+    col = "left" if rx < ww / 3 else ("center" if rx < 2 * ww / 3 else "right")
+    row = "top"   if ry < wh / 3 else ("middle" if ry < 2 * wh / 3 else "bottom")
 
     if row == "middle" and col == "center":
         return "center"
     return f"{row}-{col}"
 
 
-def _slim_element(el: dict) -> dict:
+def _slim_element(el: dict, win_rect: Optional[dict] = None) -> dict:
     """Strip an element dict to the fields the LLM needs."""
     slim = {"oculos_id": el.get("oculos_id")}
     if el.get("element_type"):
@@ -203,12 +211,24 @@ def _slim_element(el: dict) -> dict:
         slim["is_enabled"] = False
     if el.get("rect"):
         slim["rect"] = el["rect"]
-        slim["region"] = _screen_region(el["rect"])
+        slim["region"] = _screen_region(el["rect"], win_rect)
     return slim
 
 
-def _slim_elements(elements: list[dict]) -> list[dict]:
-    return [_slim_element(el) for el in elements]
+def _slim_elements(elements: list[dict], win_rect: Optional[dict] = None) -> list[dict]:
+    return [_slim_element(el, win_rect) for el in elements]
+
+
+def _win_rect_for_pid(pid: int) -> Optional[dict]:
+    """Look up the window rect for a given PID from the cached window list."""
+    try:
+        windows = _cached_list_windows()
+        for w in windows:
+            if w.get("pid") == pid:
+                return w.get("rect") or None
+    except Exception:
+        pass
+    return None
 
 
 def list_active_windows() -> Dict[str, Any]:
@@ -410,6 +430,7 @@ def find_ui_elements(
                 "message": "No elements found matching the criteria.",
                 "elements": [],
             }
+        win_rect = _win_rect_for_pid(pid)
         for el in elements:
             eid = el.get("oculos_id")
             if eid:
@@ -418,7 +439,7 @@ def find_ui_elements(
                     "query": query,
                     "element_type": element_type,
                 }
-        return {"status": "success", "elements": _slim_elements(elements)}
+        return {"status": "success", "elements": _slim_elements(elements, win_rect)}
     except Exception as e:
         return {"status": "error", "message": f"Failed to find elements: {str(e)}"}
 
