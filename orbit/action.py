@@ -35,7 +35,7 @@ class BaseActionAgent(ABC):
         *,
         session: Optional[Any] = None,
         llm: str = "gemini-3-pro-preview",
-        max_steps: int = 30,
+        max_steps: Optional[int] = None,
         planner: bool = True,
         verbose: bool = False,
         log_file_path: Optional[str] = None,

@@ -39,7 +39,6 @@ class Read(BaseActionAgent):
     """
 
     def __init__(self, task: str, *, schema: Optional[Type] = None, **kw):
-        kw.setdefault("max_steps", 10)
         super().__init__(**kw)
         self._task = task
         self._schema = schema
@@ -75,7 +74,6 @@ class Check(BaseActionAgent):
     """
 
     def __init__(self, condition: str, **kw):
-        kw.setdefault("max_steps", 5)
         super().__init__(**kw)
         self._condition = condition
 
@@ -103,7 +101,6 @@ class Navigate(BaseActionAgent):
     """
 
     def __init__(self, target: str, **kw):
-        kw.setdefault("max_steps", 10)
         super().__init__(**kw)
         self._target = target
 
