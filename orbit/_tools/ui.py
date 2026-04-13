@@ -834,7 +834,7 @@ def type_into(
                 "element": found[0],
             }
 
-        oculos_client.set_text(str(element_id), str(text))
+        oculos_client.set_text(str(element_id), str(text).rstrip("\n"))
         _invalidate_discovery_cache()
 
         if not verify:

@@ -38,6 +38,7 @@ class BaseActionAgent(ABC):
         max_steps: int = 30,
         planner: bool = True,
         verbose: bool = False,
+        log_file_path: Optional[str] = None,
         extra_info: Optional[str] = None,
         extra_tools: Optional[list] = None,
         human_in_the_loop: bool = True,
@@ -49,6 +50,7 @@ class BaseActionAgent(ABC):
         self._max_steps = max_steps
         self._planner = planner
         self._verbose = verbose
+        self._log_file_path = log_file_path
         self._extra_info = extra_info
         self._extra_tools = extra_tools or []
         self._human_in_the_loop = human_in_the_loop
@@ -71,6 +73,7 @@ class BaseActionAgent(ABC):
             max_steps=self._max_steps,
             planner=self._planner,
             verbose=self._verbose,
+            log_file_path=self._log_file_path,
             session=self._session,
             output_schema=self.output_schema(),
             extra_info=self._extra_info,

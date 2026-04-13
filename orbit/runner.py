@@ -46,6 +46,21 @@ def _console_safe(obj: Any) -> str:
     return s.encode("ascii", errors="backslashreplace").decode("ascii")
 
 
+class _Tee:
+    """Write to multiple streams simultaneously (used for log_file_path tee)."""
+
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data: str) -> None:
+        for s in self._streams:
+            s.write(data)
+
+    def flush(self) -> None:
+        for s in self._streams:
+            s.flush()
+
+
 def _setup_logging(*, verbose: bool = False) -> None:
     """Configure the 'orbit' logger. Called once per Agent init."""
     logger = logging.getLogger("orbit")
@@ -123,6 +138,7 @@ class Agent:
         planner_llm: Optional[str] = None,
         measure_latency: bool = True,
         verbose: bool = False,
+        log_file_path: Optional[str] = None,
         max_steps: int = 30,
         planner: bool = True,
         session: Optional[Any] = None,
@@ -140,6 +156,7 @@ class Agent:
         self.planner_llm = planner_llm
         self.measure_latency = measure_latency
         self.verbose = verbose
+        self.log_file_path = log_file_path
         self.max_steps = max_steps
         self.planner = bool(planner)
         self._session = session
@@ -155,23 +172,39 @@ class Agent:
     # ── Lifecycle ─────────────────────────────────────────────────
 
     async def run(self) -> RunResult:
-        if self._session and self._session.started:
-            try:
-                return await self._run()
-            except Exception as e:
-                log.error("Agent run failed: %s", e, exc_info=True)
-                return RunResult(status="error", summary=str(e), errors=[str(e)])
-        else:
-            # Ephemeral session — backward compatible path.
-            from .session import Session
+        import sys
+        import pathlib
 
-            async with Session() as s:
-                self._session = s
+        log_f = None
+        if self.log_file_path:
+            pathlib.Path(self.log_file_path).parent.mkdir(parents=True, exist_ok=True)
+            log_f = open(self.log_file_path, "w", encoding="utf-8", buffering=1)
+            sys.stdout = _Tee(sys.__stdout__, log_f)
+
+        try:
+            if self._session and self._session.started:
                 try:
                     return await self._run()
                 except Exception as e:
                     log.error("Agent run failed: %s", e, exc_info=True)
                     return RunResult(status="error", summary=str(e), errors=[str(e)])
+            else:
+                # Ephemeral session — backward compatible path.
+                from .session import Session
+
+                async with Session() as s:
+                    self._session = s
+                    try:
+                        return await self._run()
+                    except Exception as e:
+                        log.error("Agent run failed: %s", e, exc_info=True)
+                        return RunResult(
+                            status="error", summary=str(e), errors=[str(e)]
+                        )
+        finally:
+            if log_f:
+                sys.stdout = sys.__stdout__
+                log_f.close()
 
     async def __aenter__(self):
         if not self._session:
