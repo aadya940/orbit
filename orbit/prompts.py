@@ -29,12 +29,14 @@ available binary names. Do NOT guess or hardcode executable names.
    c. scroll_page / interact_with_element(action='scroll'), then retry (a) — up to 3 scrolls
    d. get_window_tree — last resort only
 
-   DISAMBIGUATION: each element has a rect {{x, y, width, height}}; each window has a
-   rect in list_active_windows. Use relative_y = element.rect.y - window.rect.y to
-   reason about position within the window. Elements with small relative_y are in the
-   browser chrome (address bar, tabs); page content inputs have larger relative_y.
-   Also prefer the element whose label best matches the task — the browser address bar
-   is labeled "Address and search bar" or "address bar".
+   DISAMBIGUATION: each element has a "region" field describing where it sits on screen:
+   "top-left", "top-center", "top-right", "middle-left", "center", "middle-right",
+   "bottom-left", "bottom-center", "bottom-right".
+   When multiple elements share the same label, pick the one whose region matches the
+   task context — form submit buttons are typically "bottom-center" or "bottom-right";
+   browser chrome (address bar, tabs, bookmarks) is always "top-left" or "top-center";
+   navigation menus are "top-right". Prefer the element whose label AND region both
+   match the task. If still ambiguous, prefer the element closer to center.
 
 ── INTERACTION (prefer in this order) ────────────────────────────────
 3. a. fill_form_fields(pid, field_labels=["First name", ...], field_values=["Jane", ...])

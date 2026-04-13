@@ -147,6 +147,41 @@ def _cached_find_elements_hwnd(
     )
 
 
+def _screen_region(rect: dict) -> str:
+    """Convert absolute rect to a human-readable screen region label.
+
+    Divides the screen into a 3x3 grid using the VM's 1280x768 resolution.
+    Returns strings like 'top-left', 'center', 'bottom-right' so the LLM
+    can reason spatially without doing pixel arithmetic.
+    """
+    x = rect.get("x", 0)
+    y = rect.get("y", 0)
+    w = rect.get("width", 0)
+    h = rect.get("height", 0)
+    cx = x + w / 2
+    cy = y + h / 2
+
+    # Horizontal thirds: 0-426 left, 427-853 center, 854+ right
+    if cx < 427:
+        col = "left"
+    elif cx < 854:
+        col = "center"
+    else:
+        col = "right"
+
+    # Vertical thirds: 0-255 top, 256-511 middle, 512+ bottom
+    if cy < 256:
+        row = "top"
+    elif cy < 512:
+        row = "middle"
+    else:
+        row = "bottom"
+
+    if row == "middle" and col == "center":
+        return "center"
+    return f"{row}-{col}"
+
+
 def _slim_element(el: dict) -> dict:
     """Strip an element dict to the fields the LLM needs."""
     slim = {"oculos_id": el.get("oculos_id")}
@@ -168,6 +203,7 @@ def _slim_element(el: dict) -> dict:
         slim["is_enabled"] = False
     if el.get("rect"):
         slim["rect"] = el["rect"]
+        slim["region"] = _screen_region(el["rect"])
     return slim
 
 
