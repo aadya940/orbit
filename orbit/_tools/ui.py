@@ -199,11 +199,14 @@ _REGION_REF: dict[str, tuple[float, float]] = {
 
 
 def _pixel_distance_to_hint(el: dict, hint: str, win_rect: Optional[dict]) -> float:
-    """Euclidean distance from element centre to the reference point of the hint region.
+    """Euclidean distance (window-relative) from element centre to the hint region's
+    reference point.
 
-    Two elements in the same 3×3 cell still have different distances — the
-    physically closer one always wins. Returns 1e9 when hint is unknown or
-    the element has no rect, placing it at the end of any sorted list.
+    Both the element centre and the reference point are expressed in window-relative
+    coordinates (screen-absolute rect minus window origin), so multi-monitor offsets
+    and window position don't skew the result.
+
+    Returns 1e9 when hint is unknown or the element has no rect.
     """
     ref = _REGION_REF.get(hint.lower())
     rect = el.get("rect")
@@ -213,10 +216,12 @@ def _pixel_distance_to_hint(el: dict, hint: str, win_rect: Optional[dict]) -> fl
     wy = (win_rect or {}).get("y", 0)
     ww = (win_rect or {}).get("width", 1280)
     wh = (win_rect or {}).get("height", 768)
-    ref_x = wx + ref[0] * ww
-    ref_y = wy + ref[1] * wh
-    el_cx = rect.get("x", 0) + rect.get("width", 0) / 2
-    el_cy = rect.get("y", 0) + rect.get("height", 0) / 2
+    # Window-relative element centre
+    el_cx = rect.get("x", 0) - wx + rect.get("width", 0) / 2
+    el_cy = rect.get("y", 0) - wy + rect.get("height", 0) / 2
+    # Window-relative reference point
+    ref_x = ref[0] * ww
+    ref_y = ref[1] * wh
     return ((el_cx - ref_x) ** 2 + (el_cy - ref_y) ** 2) ** 0.5
 
 
