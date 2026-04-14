@@ -55,7 +55,14 @@ def type_text(text: str) -> Dict[str, Any]:
             )
             
         with KEYBOARD_LOCK:
-            pyautogui.typewrite(text, interval=0.05)
+            # pyautogui.typewrite does not handle \n — split on newlines
+            # and press Enter between segments so newlines are typed correctly.
+            segments = text.split('\n')
+            for i, segment in enumerate(segments):
+                if segment:
+                    pyautogui.typewrite(segment, interval=0.05)
+                if i < len(segments) - 1:
+                    pyautogui.press('enter')
             time.sleep(0.05)
             
         return {"status": "success", "message": f"Typed: {text}"}
