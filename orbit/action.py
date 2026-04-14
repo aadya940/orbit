@@ -42,6 +42,7 @@ class BaseActionAgent(ABC):
         extra_info: Optional[str] = None,
         extra_tools: Optional[list] = None,
         human_in_the_loop: bool = True,
+        output_schema: Optional[Type] = None,
         **kwargs,
     ):
         self._session = session
@@ -54,6 +55,7 @@ class BaseActionAgent(ABC):
         self._extra_info = extra_info
         self._extra_tools = extra_tools or []
         self._human_in_the_loop = human_in_the_loop
+        self._output_schema = output_schema
         self._kwargs = kwargs
 
     @abstractmethod
@@ -62,8 +64,12 @@ class BaseActionAgent(ABC):
         ...
 
     def output_schema(self) -> Optional[Type]:
-        """Override to return a Pydantic model for ADK ``output_schema``."""
-        return None
+        """Return the output schema Pydantic model, if any.
+
+        Can be set via the ``output_schema=`` constructor kwarg, or overridden
+        in subclasses to return a hardcoded model.
+        """
+        return self._output_schema
 
     async def run(self) -> RunResult:
         """Build an internal Agent, execute the task, and return the result."""
