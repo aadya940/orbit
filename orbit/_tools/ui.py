@@ -190,22 +190,34 @@ def _screen_region(el_rect: dict, win_rect: Optional[dict] = None) -> str:
     return f"{row}-{col}"
 
 
-_REGION_GRID: dict[str, tuple[int, int]] = {
-    "top-left":      (0, 0), "top-center":    (1, 0), "top-right":     (2, 0),
-    "middle-left":   (0, 1), "center":        (1, 1), "middle-right":  (2, 1),
-    "bottom-left":   (0, 2), "bottom-center": (1, 2), "bottom-right":  (2, 2),
+# Fractional (x, y) reference points per region label, relative to window size.
+_REGION_REF: dict[str, tuple[float, float]] = {
+    "top-left":      (1/6, 1/6), "top-center":    (1/2, 1/6), "top-right":     (5/6, 1/6),
+    "middle-left":   (1/6, 1/2), "center":        (1/2, 1/2), "middle-right":  (5/6, 1/2),
+    "bottom-left":   (1/6, 5/6), "bottom-center": (1/2, 5/6), "bottom-right":  (5/6, 5/6),
 }
 
 
-def _region_distance(actual: str, hint: str) -> int:
-    """Chebyshev distance on the 3×3 region grid.
-    Returns 0 for exact match, 1 adjacent, 2 opposite corner, 4 if unknown.
+def _pixel_distance_to_hint(el: dict, hint: str, win_rect: Optional[dict]) -> float:
+    """Euclidean distance from element centre to the reference point of the hint region.
+
+    Two elements in the same 3×3 cell still have different distances — the
+    physically closer one always wins. Returns 1e9 when hint is unknown or
+    the element has no rect, placing it at the end of any sorted list.
     """
-    a = _REGION_GRID.get(actual)
-    b = _REGION_GRID.get(hint)
-    if a is None or b is None:
-        return 4
-    return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+    ref = _REGION_REF.get(hint.lower())
+    rect = el.get("rect")
+    if ref is None or not rect:
+        return 1e9
+    wx = (win_rect or {}).get("x", 0)
+    wy = (win_rect or {}).get("y", 0)
+    ww = (win_rect or {}).get("width", 1280)
+    wh = (win_rect or {}).get("height", 768)
+    ref_x = wx + ref[0] * ww
+    ref_y = wy + ref[1] * wh
+    el_cx = rect.get("x", 0) + rect.get("width", 0) / 2
+    el_cy = rect.get("y", 0) + rect.get("height", 0) / 2
+    return ((el_cx - ref_x) ** 2 + (el_cy - ref_y) ** 2) ** 0.5
 
 
 def _slim_element(el: dict, win_rect: Optional[dict] = None) -> dict:
@@ -862,13 +874,10 @@ def click_first(
                 }
 
         if region_hint and len(candidates) > 1:
-            _hint = region_hint.lower()
             win_rect = _win_rect_for_pid(pid)
             candidates = sorted(
                 candidates,
-                key=lambda el: _region_distance(
-                    _screen_region(el["rect"], win_rect) if el.get("rect") else "", _hint
-                ),
+                key=lambda el: _pixel_distance_to_hint(el, region_hint, win_rect),
             )
         element_id = candidates[0].get("oculos_id")
         if not element_id:
@@ -913,13 +922,10 @@ def type_into(
                 "message": f"Field not found for query={field_query!r} type={element_type!r}.",
             }
         if region_hint and len(found) > 1:
-            _hint = region_hint.lower()
             win_rect = _win_rect_for_pid(pid)
             found = sorted(
                 found,
-                key=lambda el: _region_distance(
-                    _screen_region(el["rect"], win_rect) if el.get("rect") else "", _hint
-                ),
+                key=lambda el: _pixel_distance_to_hint(el, region_hint, win_rect),
             )
         element_id = found[0].get("oculos_id")
         if not element_id:
