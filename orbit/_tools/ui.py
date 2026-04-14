@@ -190,6 +190,24 @@ def _screen_region(el_rect: dict, win_rect: Optional[dict] = None) -> str:
     return f"{row}-{col}"
 
 
+_REGION_GRID: dict[str, tuple[int, int]] = {
+    "top-left":      (0, 0), "top-center":    (1, 0), "top-right":     (2, 0),
+    "middle-left":   (0, 1), "center":        (1, 1), "middle-right":  (2, 1),
+    "bottom-left":   (0, 2), "bottom-center": (1, 2), "bottom-right":  (2, 2),
+}
+
+
+def _region_distance(actual: str, hint: str) -> int:
+    """Chebyshev distance on the 3×3 region grid.
+    Returns 0 for exact match, 1 adjacent, 2 opposite corner, 4 if unknown.
+    """
+    a = _REGION_GRID.get(actual)
+    b = _REGION_GRID.get(hint)
+    if a is None or b is None:
+        return 4
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+
+
 def _slim_element(el: dict, win_rect: Optional[dict] = None) -> dict:
     """Strip an element dict to the fields the LLM needs."""
     slim = {"oculos_id": el.get("oculos_id")}
@@ -773,6 +791,7 @@ def click_first(
     interactive: bool = True,
     anchor_probe_query: Optional[str] = None,
     allow_browser_chrome: bool = False,
+    region_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     High-leverage composed action: optional short wait, then find once, then click once.
@@ -842,16 +861,15 @@ def click_first(
                     ],
                 }
 
-        if len(candidates) > 1:
+        if region_hint and len(candidates) > 1:
+            _hint = region_hint.lower()
             win_rect = _win_rect_for_pid(pid)
-            return {
-                "status": "multiple_matches",
-                "message": (
-                    f"Found {len(candidates)} candidates for {query!r}. "
-                    "Inspect the candidates list and call interact_with_element with the correct element_id."
+            candidates = sorted(
+                candidates,
+                key=lambda el: _region_distance(
+                    _screen_region(el["rect"], win_rect) if el.get("rect") else "", _hint
                 ),
-                "candidates": [_slim_element(el, win_rect) for el in candidates[:5]],
-            }
+            )
         element_id = candidates[0].get("oculos_id")
         if not element_id:
             return {
@@ -877,6 +895,7 @@ def type_into(
     verify: bool = False,
     element_type: str = "Edit",
     interactive: bool = True,
+    region_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     High-leverage composed action: find a text field once, set text, optionally verify.
@@ -893,16 +912,15 @@ def type_into(
                 "status": "error",
                 "message": f"Field not found for query={field_query!r} type={element_type!r}.",
             }
-        if len(found) > 1:
+        if region_hint and len(found) > 1:
+            _hint = region_hint.lower()
             win_rect = _win_rect_for_pid(pid)
-            return {
-                "status": "multiple_matches",
-                "message": (
-                    f"Found {len(found)} candidates for {field_query!r}. "
-                    "Inspect the candidates list and call interact_with_element with the correct element_id."
+            found = sorted(
+                found,
+                key=lambda el: _region_distance(
+                    _screen_region(el["rect"], win_rect) if el.get("rect") else "", _hint
                 ),
-                "candidates": [_slim_element(el, win_rect) for el in found[:5]],
-            }
+            )
         element_id = found[0].get("oculos_id")
         if not element_id:
             return {
