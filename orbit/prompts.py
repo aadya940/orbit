@@ -46,12 +46,6 @@ available binary names. Do NOT guess or hardcode executable names.
    d. interact_with_element(element_id, action) — when you already have an element ID.
    e. select_dropdown_option / select_option_by_label — for dropdowns and select fields.
 
-   MULTIPLE MATCHES: if click_first or type_into returns status="multiple_matches",
-   inspect the candidates list — each entry has oculos_id, region, name/label, and
-   rect. Pick the candidate whose region and label best match the task context, then
-   call interact_with_element(element_id=<chosen_id>, action="click") or
-   interact_with_element(element_id=<chosen_id>, action="set_text", text_input=<text>).
-
 ── EFFICIENCY ────────────────────────────────────────────────────────
 4. POST-ACTION STATE: interact_with_element appends element state to its message
    (e.g. "| toggle_state=On, checked=True"). Read it from there — do NOT follow

@@ -766,6 +766,37 @@ async def interact_with_element(
     return {"status": "error", "message": f"Interaction failed: {msg}"}
 
 
+_BROWSER_CHROME_MARKERS = (
+    # Address bar — label varies with focus/state
+    "address and search bar",
+    "search or enter url",
+    "search google or type a url",
+    "omnibox",
+    # Navigation / tabs
+    "bookmark",
+    "bookmarks",
+    "tab search",
+    "new tab",
+    "tab",
+    # Browser UI chrome
+    "extensions",
+    "profile",
+    "chrome toolbar",
+)
+
+
+def _is_browser_chrome(el: Dict[str, Any]) -> bool:
+    """Return True if the element belongs to browser chrome (address bar, tabs, etc.)
+    rather than page content. Checked against a broad set of markers that covers
+    Chrome's address bar in all focus states.
+    """
+    text = " ".join(
+        str(el.get(k) or "")
+        for k in ("name", "title", "label", "value", "text_content", "element_type")
+    ).lower()
+    return any(marker in text for marker in _BROWSER_CHROME_MARKERS)
+
+
 def click_first(
     pid: int,
     query: str,
@@ -790,23 +821,7 @@ def click_first(
     """
 
     def _is_browser_chrome_element(el: Dict[str, Any]) -> bool:
-        text = " ".join(
-            str(el.get(k) or "")
-            for k in ("name", "title", "label", "value", "text_content", "element_type")
-        ).lower()
-        chrome_markers = (
-            "address and search bar",
-            "bookmark",
-            "bookmarks",
-            "tab search",
-            "new tab",
-            "tab",
-            "extensions",
-            "profile",
-            "chrome toolbar",
-            "omnibox",
-        )
-        return any(marker in text for marker in chrome_markers)
+        return _is_browser_chrome(el)
 
     try:
         if anchor_probe_query:
@@ -842,16 +857,6 @@ def click_first(
                     ],
                 }
 
-        if len(candidates) > 1:
-            win_rect = _win_rect_for_pid(pid)
-            return {
-                "status": "multiple_matches",
-                "message": (
-                    f"Found {len(candidates)} candidates for {query!r}. "
-                    "Inspect the candidates list and call interact_with_element with the correct element_id."
-                ),
-                "candidates": [_slim_element(el, win_rect) for el in candidates[:5]],
-            }
         element_id = candidates[0].get("oculos_id")
         if not element_id:
             return {
@@ -893,16 +898,11 @@ def type_into(
                 "status": "error",
                 "message": f"Field not found for query={field_query!r} type={element_type!r}.",
             }
-        if len(found) > 1:
-            win_rect = _win_rect_for_pid(pid)
-            return {
-                "status": "multiple_matches",
-                "message": (
-                    f"Found {len(found)} candidates for {field_query!r}. "
-                    "Inspect the candidates list and call interact_with_element with the correct element_id."
-                ),
-                "candidates": [_slim_element(el, win_rect) for el in found[:5]],
-            }
+        # Filter out browser chrome elements (address bar, etc.) — their AT-SPI position
+        # shifts based on focus state, so they can appear before page inputs.
+        filtered = [el for el in found if not _is_browser_chrome(el)]
+        if filtered:
+            found = filtered
         element_id = found[0].get("oculos_id")
         if not element_id:
             return {
