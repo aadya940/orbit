@@ -842,6 +842,16 @@ def click_first(
                     ],
                 }
 
+        if len(candidates) > 1:
+            win_rect = _win_rect_for_pid(pid)
+            return {
+                "status": "multiple_matches",
+                "message": (
+                    f"Found {len(candidates)} candidates for {query!r}. "
+                    "Inspect the candidates list and call interact_with_element with the correct element_id."
+                ),
+                "candidates": [_slim_element(el, win_rect) for el in candidates[:5]],
+            }
         element_id = candidates[0].get("oculos_id")
         if not element_id:
             return {
@@ -882,6 +892,16 @@ def type_into(
             return {
                 "status": "error",
                 "message": f"Field not found for query={field_query!r} type={element_type!r}.",
+            }
+        if len(found) > 1:
+            win_rect = _win_rect_for_pid(pid)
+            return {
+                "status": "multiple_matches",
+                "message": (
+                    f"Found {len(found)} candidates for {field_query!r}. "
+                    "Inspect the candidates list and call interact_with_element with the correct element_id."
+                ),
+                "candidates": [_slim_element(el, win_rect) for el in found[:5]],
             }
         element_id = found[0].get("oculos_id")
         if not element_id:
