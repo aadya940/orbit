@@ -190,41 +190,6 @@ def _screen_region(el_rect: dict, win_rect: Optional[dict] = None) -> str:
     return f"{row}-{col}"
 
 
-# Fractional (x, y) reference points per region label, relative to window size.
-_REGION_REF: dict[str, tuple[float, float]] = {
-    "top-left":      (1/6, 1/6), "top-center":    (1/2, 1/6), "top-right":     (5/6, 1/6),
-    "middle-left":   (1/6, 1/2), "center":        (1/2, 1/2), "middle-right":  (5/6, 1/2),
-    "bottom-left":   (1/6, 5/6), "bottom-center": (1/2, 5/6), "bottom-right":  (5/6, 5/6),
-}
-
-
-def _pixel_distance_to_hint(el: dict, hint: str, win_rect: Optional[dict]) -> float:
-    """Euclidean distance (window-relative) from element centre to the hint region's
-    reference point.
-
-    Both the element centre and the reference point are expressed in window-relative
-    coordinates (screen-absolute rect minus window origin), so multi-monitor offsets
-    and window position don't skew the result.
-
-    Returns 1e9 when hint is unknown or the element has no rect.
-    """
-    ref = _REGION_REF.get(hint.lower())
-    rect = el.get("rect")
-    if ref is None or not rect:
-        return 1e9
-    wx = (win_rect or {}).get("x", 0)
-    wy = (win_rect or {}).get("y", 0)
-    ww = (win_rect or {}).get("width", 1280)
-    wh = (win_rect or {}).get("height", 768)
-    # Window-relative element centre
-    el_cx = rect.get("x", 0) - wx + rect.get("width", 0) / 2
-    el_cy = rect.get("y", 0) - wy + rect.get("height", 0) / 2
-    # Window-relative reference point
-    ref_x = ref[0] * ww
-    ref_y = ref[1] * wh
-    return ((el_cx - ref_x) ** 2 + (el_cy - ref_y) ** 2) ** 0.5
-
-
 def _slim_element(el: dict, win_rect: Optional[dict] = None) -> dict:
     """Strip an element dict to the fields the LLM needs."""
     slim = {"oculos_id": el.get("oculos_id")}
@@ -808,7 +773,6 @@ def click_first(
     interactive: bool = True,
     anchor_probe_query: Optional[str] = None,
     allow_browser_chrome: bool = False,
-    region_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     High-leverage composed action: optional short wait, then find once, then click once.
@@ -878,12 +842,6 @@ def click_first(
                     ],
                 }
 
-        if region_hint and len(candidates) > 1:
-            win_rect = _win_rect_for_pid(pid)
-            candidates = sorted(
-                candidates,
-                key=lambda el: _pixel_distance_to_hint(el, region_hint, win_rect),
-            )
         element_id = candidates[0].get("oculos_id")
         if not element_id:
             return {
@@ -909,7 +867,6 @@ def type_into(
     verify: bool = False,
     element_type: str = "Edit",
     interactive: bool = True,
-    region_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     High-leverage composed action: find a text field once, set text, optionally verify.
@@ -926,12 +883,6 @@ def type_into(
                 "status": "error",
                 "message": f"Field not found for query={field_query!r} type={element_type!r}.",
             }
-        if region_hint and len(found) > 1:
-            win_rect = _win_rect_for_pid(pid)
-            found = sorted(
-                found,
-                key=lambda el: _pixel_distance_to_hint(el, region_hint, win_rect),
-            )
         element_id = found[0].get("oculos_id")
         if not element_id:
             return {

@@ -46,12 +46,6 @@ available binary names. Do NOT guess or hardcode executable names.
    d. interact_with_element(element_id, action) — when you already have an element ID.
    e. select_dropdown_option / select_option_by_label — for dropdowns and select fields.
 
-   SPATIAL TARGETING: when the task mentions where an element is on screen
-   (e.g. "center", "bottom", "top-right"), pass it as region_hint= to
-   click_first or type_into. Valid values: "top-left", "top-center", "top-right",
-   "middle-left", "center", "middle-right", "bottom-left", "bottom-center",
-   "bottom-right". Omit when no spatial context is available.
-
 ── EFFICIENCY ────────────────────────────────────────────────────────
 4. POST-ACTION STATE: interact_with_element appends element state to its message
    (e.g. "| toggle_state=On, checked=True"). Read it from there — do NOT follow
