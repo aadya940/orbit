@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orbit-cua"
-version = "0.2.12"
+version = "0.2.13"
 description = "General computer-use agent."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,9 +36,7 @@ dependencies = [
     "pdfplumber>=0.11.9",
     "send2trash>=2.1.0",
     "rich>=14.1.0",
-    "duckduckgo-search>=8.1.1",
-    "readability-lxml>=0.8.4.1",
-    "beautifulsoup4>=4.14.2",
+    "ddgs>=9.13.0",
 ]
 
 [project.urls]
