@@ -49,5 +49,24 @@ class BrowserManager:
             Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
         """)
 
+    async def ensure_active_page(self) -> None:
+        if self.playwright is None:
+            await self.start()
+        
+        if self.active_page is None or self.active_page.is_closed():
+            if self.browser_context.pages:
+                self.active_page = self.browser_context.pages[0]
+            else:
+                self.active_page = await self.browser_context.new_page()
+
+    async def stop(self) -> None:
+        if self.browser_context:
+            await self.browser_context.close()
+            self.browser_context = None
+        if self.playwright:
+            await self.playwright.stop()
+            self.playwright = None
+        self.active_page = None
+
 # Export a global singleton for tools to use
 global_browser = BrowserManager()

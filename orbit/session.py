@@ -43,11 +43,7 @@ class Session:
 
     async def __aenter__(self) -> "Session":
         await self._daemon.start()
-        # Initialize the persistent browser attached to the session
-        try:
-            await self._browser.start()
-        except Exception as e:
-            log.warning(f"Failed to start Playwright browser: {e}")
+        # The browser will be lazy-loaded when a tool requires it.
         self._started = True
         return self
 
