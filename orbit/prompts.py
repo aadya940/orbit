@@ -102,6 +102,7 @@ available binary names. Do NOT guess or hardcode executable names.
     find_ui_elements_hwnd(hwnd, query) → interact_with_element
 
 11. BROWSER MANAGEMENT
+    - **HYBRID WEB AUTOMATION**: Use the `dom_navigate`, `dom_click`, `dom_fill`, and `dom_extract` tools ONLY for interacting with web pages specifically inside the browser. These tools manage their own internal browser instance. Avoid launching a secondary OS-level browser (like `google-chrome`) via `launch_and_get_pid` when completing standard web tasks. When a web task is requested, directly use `dom_navigate` to browse.
     - Always check list_active_windows first. If a browser is already open, use its PID — never launch again.
     - New tab: press_hotkey('ctrl+t') then navigate_to_url.
     - Never open a new browser window when one is already open.
