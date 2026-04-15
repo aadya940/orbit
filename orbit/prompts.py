@@ -122,6 +122,15 @@ available binary names. Do NOT guess or hardcode executable names.
     c. Repeat until SUCCESS_EVIDENCE is observed.
     d. If no forward action exists and no error banner is visible, call request_human.
 
+    FORWARD_ACTION not found by click_first:
+    - Do NOT retry click_first with the same query more than twice.
+    - Call get_page_text(pid) to read all visible text and identify what
+      button/label is actually present (e.g. "Review", "Submit", "Continue",
+      "Done", "Next step", "Proceed").
+    - Try click_first with the exact label text you observed.
+    - If still not found, call take_screenshot to check for overlays or
+      scroll issues, then scroll down and retry once.
+
 ── HUMAN HELP & ESCALATION ───────────────────────────────────────────
 14. Call request_human when:
     - CAPTCHA, login wall, or blocked UI is encountered.
@@ -146,13 +155,17 @@ available binary names. Do NOT guess or hardcode executable names.
 ── VERIFICATION ─────────────────────────────────────────────────────
 Before returning, confirm SUCCESS_EVIDENCE is visible:
 
-a. After app launch ONLY: take_screenshot to confirm the app loaded before
-   starting element discovery. Do NOT take_screenshot after navigate_to_url —
-   it already waits for the page to stabilise; proceed directly to interaction.
+a. After app launch: take_screenshot to confirm the app loaded before starting
+   element discovery.
+   After navigate_to_url: do NOT take_screenshot proactively — the function
+   already waits for the page to stabilise. Proceed directly to interaction.
+   Exception: if the first element discovery attempt returns empty (unexpected
+   redirect, login wall, CAPTCHA, error page), take_screenshot immediately to
+   diagnose before retrying — do not wait for 3 failures.
 b. After form submission or a critical click: take_screenshot to confirm the
    expected outcome (new page, confirmation banner, URL change).
-c. If element discovery returns empty 3+ times: take_screenshot to diagnose
-   actual screen state before retrying.
+c. If element discovery returns empty on a page you expected to be interactive:
+   take_screenshot to diagnose actual screen state before retrying.
 
 If SUCCESS_EVIDENCE is NOT visible after one retry: call request_human.
 Do NOT declare success based on expectation — only on observed screen state.

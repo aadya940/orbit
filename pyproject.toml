@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orbit-cua"
-version = "0.2.18"
+version = "0.2.19"
 description = "General computer-use agent."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +37,7 @@ dependencies = [
     "send2trash>=2.1.0",
     "rich>=14.1.0",
     "ddgs>=9.13.0",
+    "playwright>=1.42.0",
 ]
 
 [project.urls]
