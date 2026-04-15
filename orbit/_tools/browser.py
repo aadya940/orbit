@@ -51,3 +51,6 @@ class BrowserManager:
             await self.browser_context.close()
         if self.playwright:
             await self.playwright.stop()
+
+# Export a global singleton for tools to use
+global_browser = BrowserManager()
