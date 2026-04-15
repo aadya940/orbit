@@ -19,7 +19,9 @@ available binary names. Do NOT guess or hardcode executable names.
    Once the step's goal is clearly achieved, confirm it (see VERIFICATION), then return.
 
 ── WINDOW & PID MANAGEMENT ───────────────────────────────────────────
-1. Call list_active_windows once to get PIDs. Cache every PID immediately.
+1. If EXTRA_INFO contains a PID for the window you need (e.g. "browser_pid=1234"),
+   use it directly — do NOT call list_active_windows.
+   Otherwise call list_active_windows once to get PIDs. Cache every PID immediately.
    Never repeat unless a new window has opened.
    To start an app: launch_and_get_pid(app_name) — start + PID in one call.
 
@@ -144,8 +146,9 @@ available binary names. Do NOT guess or hardcode executable names.
 ── VERIFICATION ─────────────────────────────────────────────────────
 Before returning, confirm SUCCESS_EVIDENCE is visible:
 
-a. After navigate_to_url or app launch: take_screenshot to confirm the target
-   page/app loaded before starting element discovery.
+a. After app launch ONLY: take_screenshot to confirm the app loaded before
+   starting element discovery. Do NOT take_screenshot after navigate_to_url —
+   it already waits for the page to stabilise; proceed directly to interaction.
 b. After form submission or a critical click: take_screenshot to confirm the
    expected outcome (new page, confirmation banner, URL change).
 c. If element discovery returns empty 3+ times: take_screenshot to diagnose

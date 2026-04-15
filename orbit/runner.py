@@ -439,13 +439,26 @@ class Agent:
     @staticmethod
     def _compose_prompt(task: str, extra_info: Optional[str]) -> str:
         """Build the ADK user prompt from task plus optional advisory hints."""
+        from ._tools.ui import get_known_pids
+
         base_task = (task or "").strip()
-        if not extra_info:
+
+        # Inject cross-verb PID hints so the agent can skip list_active_windows
+        # for windows already discovered in a prior verb of the same session.
+        pid_hints: list[str] = []
+        for role, pid in get_known_pids().items():
+            pid_hints.append(f"{role}_pid={pid}")
+        pid_line = ", ".join(pid_hints) if pid_hints else ""
+
+        parts: list[str] = []
+        if pid_line:
+            parts.append(f"KNOWN_PIDS (skip list_active_windows for these): {pid_line}")
+        if extra_info:
+            parts.append(f"EXTRA_INFO (advisory context):\n{extra_info.strip()}")
+
+        if not parts:
             return base_task
-        return (
-            f"PRIMARY_TASK:\n{base_task}\n\n"
-            f"EXTRA_INFO (advisory context):\n{extra_info}"
-        )
+        return f"PRIMARY_TASK:\n{base_task}\n\n" + "\n\n".join(parts)
 
     # ── Event dispatch ────────────────────────────────────────────
 
