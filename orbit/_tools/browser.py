@@ -23,29 +23,38 @@ class BrowserManager:
         self.playwright = await async_playwright().start()
         
         flags = [
-            "--force-renderer-accessibility", 
-            "--enable-accessibility", 
-            "--disable-gpu", 
+            "--force-renderer-accessibility",
+            "--enable-accessibility",
+            "--disable-gpu",
             "--no-sandbox",
             "--start-maximized",
             "--disable-blink-features=AutomationControlled"
         ]
 
-        # Clean up stray SingletonLock if it exists from a previous crash
+        # Ephemeral Profile Copy pattern:
+        # We copy the persistent profile to an ephemeral temp dir, stripping any locks.
+        # This allows Docker to keep the base volume safe from corruption and file-lock deadlocks.
         import os
         import shutil
-        lock_file = "/root/.config/google-chrome/SingletonLock"
-        if os.path.exists(lock_file):
-            try:
-                os.remove(lock_file)
-                log.info(f"Removed stale {lock_file}")
-            except Exception as e:
-                log.warning(f"Failed to remove {lock_file}: {e}")
+        
+        self.src_profile = "/root/.config/google-chrome"
+        self.tmp_profile = "/tmp/chrome-profile"
 
-        # In Docker, we map this directly. In normal usage, default local chrome profile
-        # Use existing context to persist login and cache state.
+        if os.path.exists(self.tmp_profile):
+            shutil.rmtree(self.tmp_profile, ignore_errors=True)
+
+        if os.path.exists(self.src_profile):
+            log.info("Copying persistent profile to ephemeral storage...")
+            shutil.copytree(
+                self.src_profile,
+                self.tmp_profile,
+                ignore=shutil.ignore_patterns("SingletonLock", "SingletonCookie", "SingletonSocket")
+            )
+        else:
+            os.makedirs(self.tmp_profile, exist_ok=True)
+
         self.browser_context = await self.playwright.chromium.launch_persistent_context(
-            user_data_dir="/root/.config/google-chrome",
+            user_data_dir=self.tmp_profile,
             headless=False,
             args=flags,
             ignore_https_errors=True,
@@ -74,6 +83,19 @@ class BrowserManager:
         if self.browser_context:
             await self.browser_context.close()
             self.browser_context = None
+            
+            # Sync session changes back to the permanent volume cleanly
+            import os
+            import shutil
+            if hasattr(self, 'tmp_profile') and os.path.exists(self.tmp_profile):
+                log.info("Syncing ephemeral profile back to persistent storage...")
+                shutil.copytree(
+                    self.tmp_profile,
+                    self.src_profile,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("SingletonLock", "SingletonCookie", "SingletonSocket")
+                )
+
         if self.playwright:
             await self.playwright.stop()
             self.playwright = None
