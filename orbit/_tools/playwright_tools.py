@@ -6,12 +6,22 @@ from .browser import global_browser
 log = logging.getLogger("orbit.playwright_tools")
 
 async def dom_navigate(url: str) -> Dict[str, Any]:
-    """Navigate the browser to a specific URL using the inside-DOM Playwright engine."""
+    """Navigate the browser to a specific URL using the inside-DOM Playwright engine.
+    
+    IMPORTANT STATE RULE: Before we interact visually with a browser, we must ensure 
+    the bounding box is completely synchronized. We will maximize the window here 
+    because we assume that if a navigation was called, the browser is our current target.
+    """
     if not global_browser.active_page:
         return {"status": "error", "message": "Browser is not active."}
     try:
+        # Before navigating, let's force the browser process window to maximize via shell
+        # so that if the LLM swaps to "visual tools" (click_first), the coordinates perfectly map.
+        import subprocess
+        subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "chromium", "windowactivate", "windowsize", "100%", "100%"], capture_output=True)
+        # Proceed with normal DOM navigation
         await global_browser.active_page.goto(url, wait_until="domcontentloaded")
-        return {"status": "success", "message": f"Navigated to {url}"}
+        return {"status": "success", "message": f"Navigated to {url}, forced UI window maximize"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
