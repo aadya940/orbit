@@ -6,10 +6,12 @@ from .browser import global_browser
 log = logging.getLogger("orbit.playwright_tools")
 
 async def dom_navigate(url: str) -> Dict[str, Any]:
-    """Navigate the browser to a specific URL using the inside-DOM Playwright engine.
+    """Navigate to a specific URL using the inside-DOM Playwright engine. 
+    This automatically launches the built-in browser if it is not open. 
+    Use this tool first whenever asked to visit a webpage, rather than relying on OS navigation.
     
-    IMPORTANT STATE RULE: Before we interact visually with a browser, we must ensure 
-    the bounding box is completely synchronized. We will maximize the window here 
+    IMPORTANT STATE RULE: Before we interact visually with a browser, we must ensure
+    the bounding box is completely synchronized. We will maximize the window here
     because we assume that if a navigation was called, the browser is our current target.
     """
     await global_browser.ensure_active_page()

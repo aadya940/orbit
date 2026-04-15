@@ -31,6 +31,17 @@ class BrowserManager:
             "--disable-blink-features=AutomationControlled"
         ]
 
+        # Clean up stray SingletonLock if it exists from a previous crash
+        import os
+        import shutil
+        lock_file = "/root/.config/google-chrome/SingletonLock"
+        if os.path.exists(lock_file):
+            try:
+                os.remove(lock_file)
+                log.info(f"Removed stale {lock_file}")
+            except Exception as e:
+                log.warning(f"Failed to remove {lock_file}: {e}")
+
         # In Docker, we map this directly. In normal usage, default local chrome profile
         # Use existing context to persist login and cache state.
         self.browser_context = await self.playwright.chromium.launch_persistent_context(
