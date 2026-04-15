@@ -11,6 +11,7 @@ from google.adk.artifacts import InMemoryArtifactService
 
 from .daemon import OculOSManager
 from ._ui.toast import run_toast_ui
+from ._tools.browser import BrowserManager
 
 log = logging.getLogger("orbit.session")
 
@@ -30,17 +31,31 @@ class Session:
 
     def __init__(self):
         self._daemon = OculOSManager()
+        self._browser = BrowserManager()
         self._started = False
         self._session_service = InMemorySessionService()
         self._artifact_service = InMemoryArtifactService()
         self._adk_session = None
 
+    @property
+    def browser(self) -> BrowserManager:
+        return self._browser
+
     async def __aenter__(self) -> "Session":
         await self._daemon.start()
+        # Initialize the persistent browser attached to the session
+        try:
+            await self._browser.start()
+        except Exception as e:
+            log.warning(f"Failed to start Playwright browser: {e}")
         self._started = True
         return self
 
     async def __aexit__(self, *exc):
+        try:
+            await self._browser.stop()
+        except Exception:
+            pass
         try:
             self._daemon.stop()
         except Exception:

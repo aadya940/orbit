@@ -423,7 +423,9 @@ class Agent:
         latency_summary = self._latency.summary() if self._latency else {}
         llm_calls_used = int(self._budget_counter.get("call_count", 0))
         latency_summary["llm_calls"] = llm_calls_used
-        latency_summary["max_llm_calls"] = self.max_steps if self.max_steps is not None else "unlimited"
+        latency_summary["max_llm_calls"] = (
+            self.max_steps if self.max_steps is not None else "unlimited"
+        )
         if self._latency:
             self._ui.latency(latency_summary)
 
