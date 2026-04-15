@@ -27,9 +27,10 @@ class BrowserManager:
             "--enable-accessibility", 
             "--disable-gpu", 
             "--no-sandbox",
-            "--start-maximized"
+            "--start-maximized",
+            "--disable-blink-features=AutomationControlled"
         ]
-        
+
         # In Docker, we map this directly. In normal usage, default local chrome profile
         # Use existing context to persist login and cache state.
         self.browser_context = await self.playwright.chromium.launch_persistent_context(
@@ -39,18 +40,14 @@ class BrowserManager:
             ignore_https_errors=True,
             no_viewport=True  # Forces chromium DOM viewport to align with OS Window (for CUA parity)
         )
-        
-        # Provide an empty starting page
-        if len(self.browser_context.pages) > 0:
-            self.active_page = self.browser_context.pages[0]
-        else:
-            self.active_page = await self.browser_context.new_page()
 
-    async def stop(self) -> None:
-        if self.browser_context:
-            await self.browser_context.close()
-        if self.playwright:
-            await self.playwright.stop()
+        # Mask Playwright WebDriver to prevent bot detection (Concern #2)
+        await self.browser_context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.navigator.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        """)
 
 # Export a global singleton for tools to use
 global_browser = BrowserManager()
