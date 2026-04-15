@@ -122,6 +122,15 @@ available binary names. Do NOT guess or hardcode executable names.
     c. Repeat until SUCCESS_EVIDENCE is observed.
     d. If no forward action exists and no error banner is visible, call request_human.
 
+    FORWARD_ACTION not found by click_first:
+    - Do NOT retry click_first with the same query more than twice.
+    - Call get_page_text(pid) to read all visible text and identify what
+      button/label is actually present (e.g. "Review", "Submit", "Continue",
+      "Done", "Next step", "Proceed").
+    - Try click_first with the exact label text you observed.
+    - If still not found, call take_screenshot to check for overlays or
+      scroll issues, then scroll down and retry once.
+
 ── HUMAN HELP & ESCALATION ───────────────────────────────────────────
 14. Call request_human when:
     - CAPTCHA, login wall, or blocked UI is encountered.
