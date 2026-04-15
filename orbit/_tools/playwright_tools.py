@@ -27,7 +27,9 @@ async def dom_navigate(url: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 async def dom_click(selector: str) -> Dict[str, Any]:
-    """Click an element matching the given CSS selector using the DOM."""    await global_browser.ensure_active_page()    if not global_browser.active_page:
+    """Click an element matching the given CSS selector using the DOM."""
+    await global_browser.ensure_active_page()
+    if not global_browser.active_page:
         return {"status": "error", "message": "Browser is not active."}
     try:
         await global_browser.active_page.click(selector, timeout=5000)
