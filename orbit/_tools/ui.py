@@ -54,6 +54,17 @@ class _CacheEntry:
 
 _discovery_cache: dict[tuple, _CacheEntry] = {}
 
+# Cross-verb PID cache: populated by list_active_windows, read by runner.py to
+# inject known PIDs into the task prompt so the agent can skip list_active_windows.
+_known_pids: dict[str, int] = {}  # e.g. {"browser": 1234}
+
+_BROWSER_PROC_NAMES = ("chrome", "chromium", "firefox", "brave", "msedge", "opera")
+
+
+def get_known_pids() -> dict[str, int]:
+    """Return the cross-verb PID cache for prompt injection."""
+    return dict(_known_pids)
+
 
 def _cache_get(key: tuple) -> Any:
     ent = _discovery_cache.get(key)
@@ -241,6 +252,13 @@ def list_active_windows() -> Dict[str, Any]:
     """
     try:
         windows = _cached_list_windows()
+        # Populate the cross-verb PID cache so runner.py can inject known PIDs
+        # into subsequent Do prompts, allowing the agent to skip this call.
+        for w in windows:
+            pid = w.get("pid")
+            name = (w.get("app_name") or w.get("title") or "").lower()
+            if pid and any(b in name for b in _BROWSER_PROC_NAMES):
+                _known_pids["browser"] = pid
         return {"status": "success", "windows": windows}
     except Exception as e:
         return {"status": "error", "message": f"Failed to list windows: {str(e)}"}
@@ -911,7 +929,39 @@ def type_into(
                 "element": found[0],
             }
 
-        oculos_client.set_text(str(element_id), str(text).rstrip("\n"))
+        text_str = str(text)
+        stripped = text_str.rstrip("\n")
+        trailing_newlines = len(text_str) - len(stripped)
+
+        if "\n" in stripped and pyautogui is not None:
+            # Embedded newlines (e.g. multi-paragraph cover letter) — AT-SPI SetValue
+            # can't insert mid-string newlines, so we need full keyboard simulation.
+            # Click to focus, then Ctrl+A+Delete to clear any existing content first
+            # (pyautogui.typewrite appends at cursor; not clearing causes concatenation).
+            oculos_client.click(str(element_id))
+            time.sleep(0.15)
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.press("delete")
+            segments = stripped.split("\n")
+            for i, segment in enumerate(segments):
+                if segment:
+                    pyautogui.typewrite(segment, interval=0.03)
+                if i < len(segments) - 1:
+                    pyautogui.press("enter")
+            for _ in range(trailing_newlines):
+                pyautogui.press("enter")
+            time.sleep(0.05)
+        elif trailing_newlines and pyautogui is not None:
+            # Only trailing newline(s) — common case (URL + Enter, form submit).
+            # Use fast AT-SPI set_text for the body, then press Enter for the newline(s).
+            # This is as fast as before and avoids the typewrite slowdown.
+            oculos_client.set_text(str(element_id), stripped)
+            time.sleep(0.05)
+            for _ in range(trailing_newlines):
+                pyautogui.press("enter")
+            time.sleep(0.05)
+        else:
+            oculos_client.set_text(str(element_id), text_str)
         _invalidate_discovery_cache()
 
         if not verify:
