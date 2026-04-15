@@ -12,6 +12,7 @@ async def dom_navigate(url: str) -> Dict[str, Any]:
     the bounding box is completely synchronized. We will maximize the window here 
     because we assume that if a navigation was called, the browser is our current target.
     """
+    await global_browser.ensure_active_page()
     if not global_browser.active_page:
         return {"status": "error", "message": "Browser is not active."}
     try:
@@ -26,8 +27,7 @@ async def dom_navigate(url: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 async def dom_click(selector: str) -> Dict[str, Any]:
-    """Click an element matching the given CSS selector using the DOM."""
-    if not global_browser.active_page:
+    """Click an element matching the given CSS selector using the DOM."""    await global_browser.ensure_active_page()    if not global_browser.active_page:
         return {"status": "error", "message": "Browser is not active."}
     try:
         await global_browser.active_page.click(selector, timeout=5000)
@@ -37,6 +37,7 @@ async def dom_click(selector: str) -> Dict[str, Any]:
 
 async def dom_fill(selector: str, value: str) -> Dict[str, Any]:
     """Fill an input field matching the CSS selector with a value using the DOM."""
+    await global_browser.ensure_active_page()
     if not global_browser.active_page:
         return {"status": "error", "message": "Browser is not active."}
     try:
@@ -47,6 +48,7 @@ async def dom_fill(selector: str, value: str) -> Dict[str, Any]:
 
 async def dom_extract(selector: str = "body") -> Dict[str, Any]:
     """Extract internal text content from elements matching the given CSS selector using the DOM."""
+    await global_browser.ensure_active_page()
     if not global_browser.active_page:
         return {"status": "error", "message": "Browser is not active."}
     try:
