@@ -11,7 +11,7 @@ from google.adk.artifacts import InMemoryArtifactService
 
 from .daemon import OculOSManager
 from ._ui.toast import run_toast_ui
-from ._tools.browser import BrowserManager
+from ._tools.browser import BrowserManager, global_browser
 
 log = logging.getLogger("orbit.session")
 
@@ -31,7 +31,7 @@ class Session:
 
     def __init__(self):
         self._daemon = OculOSManager()
-        self._browser = BrowserManager()
+        self._browser = global_browser
         self._started = False
         self._session_service = InMemorySessionService()
         self._artifact_service = InMemoryArtifactService()

@@ -42,6 +42,12 @@ from ._tools.clipboard import (
     clipboard_get,
     clipboard_set,
 )
+from ._tools.playwright_tools import (
+    dom_navigate,
+    dom_click,
+    dom_fill,
+    dom_extract,
+)
 from ._tools.search import duckduckgo_search
 from ._tools.filesystem import (
     get_system_info,
@@ -49,6 +55,10 @@ from ._tools.filesystem import (
     read_file,
     read_pdf,
     read_csv,
+    dom_navigate,
+    dom_click,
+    dom_fill,
+    dom_extract,
     list_directory,
     search_files,
     file_exists,
@@ -384,6 +394,10 @@ def build_desktop_agent(
             select_option_by_label,
             clipboard_get,
             clipboard_set,
+            dom_navigate,
+            dom_click,
+            dom_fill,
+            dom_extract,
             list_directory,
             duckduckgo_search,
             move_file_approval,
