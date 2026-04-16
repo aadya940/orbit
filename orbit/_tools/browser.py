@@ -86,7 +86,7 @@ class BrowserManager:
             try:
                 playwright = await async_playwright().start()
                 context = await playwright.chromium.launch_persistent_context(
-                    user_data_dir=tmp_profile,
+                    user_data_dir=tmp_profile, executable_path='/usr/bin/google-chrome',
                     headless=False,
                     args=_CHROME_FLAGS,
                     ignore_https_errors=True,
