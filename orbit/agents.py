@@ -46,7 +46,12 @@ from ._tools.playwright_tools import (
     dom_click,
     dom_fill,
     dom_extract,
+    dom_list_frames,
+    dom_switch_frame,
+    dom_switch_frame_default,
+    dom_click_text,
 )
+
 from ._tools.search import duckduckgo_search
 from ._tools.filesystem import (
     get_system_info,
@@ -393,6 +398,10 @@ def build_desktop_agent(
             dom_click,
             dom_fill,
             dom_extract,
+            dom_list_frames,
+            dom_switch_frame,
+            dom_switch_frame_default,
+            dom_click_text,
             list_directory,
             duckduckgo_search,
             move_file_approval,

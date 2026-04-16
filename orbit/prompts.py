@@ -143,6 +143,7 @@ Confirm SUCCESS_EVIDENCE is visible before returning:
   • Never click browser bookmark links for page search tasks.
   • Never retry a failed tool call more than twice with the same arguments.
   • Never install software yourself.
+  • Never call dom_switch_frame without calling dom_list_frames first to confirm the frame selector or index.
 """
 
 
