@@ -23,7 +23,8 @@ _CHROME_FLAGS = [
     "--enable-accessibility",
     "--disable-gpu",
     "--no-sandbox",
-    "--start-maximized",
+    "--disable-dev-shm-usage",          # Docker's /dev/shm is 64MB by default; Chrome will OOM-crash without this
+    "--window-size=1280,768",            # explicit size; --start-maximized is unreliable without a real WM
     "--disable-blink-features=AutomationControlled",
 ]
 
