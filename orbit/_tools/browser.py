@@ -62,6 +62,7 @@ class BrowserManager:
         self._playwright = None
         self._browser_context: Optional["BrowserContext"] = None
         self._active_page: Optional["Page"] = None
+        self.active_frame = None
         self._tmp_profile: Optional[str] = None
         self._lock = asyncio.Lock()
 
