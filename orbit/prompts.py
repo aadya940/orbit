@@ -53,7 +53,7 @@ available binary names. Do NOT guess or hardcode executable names.
    (e.g. "| toggle_state=On, checked=True"). Read it from there — do NOT follow
    up with find_ui_elements just to confirm a state change.
 
-5. NAVIGATION: navigate_to_url waits for the page to stabilise before returning.
+5. NAVIGATION: dom_navigate waits for the page to stabilise before returning.
    Do NOT call wait_for_element immediately after — the page is already ready.
    Use wait_for_element only after app launch, modal transitions, or slow async actions.
 
@@ -102,9 +102,9 @@ available binary names. Do NOT guess or hardcode executable names.
     find_ui_elements_hwnd(hwnd, query) → interact_with_element
 
 11. BROWSER MANAGEMENT
-    - **HYBRID WEB AUTOMATION**: Use the `dom_navigate`, `dom_click`, `dom_fill`, and `dom_extract` tools ONLY for interacting with web pages specifically inside the browser. These tools manage their own internal browser instance. Avoid launching a secondary OS-level browser (like `google-chrome`) via `launch_and_get_pid` when completing standard web tasks. When a web task is requested, directly use `dom_navigate` to browse.
+    - **HYBRID WEB AUTOMATION**: YOU MUST ALWAYS PROVIDE FULLY QUALIFIED URLs starting with http:// to dom_navigate. Use the `dom_navigate`, `dom_click`, `dom_fill`, and `dom_extract` tools ONLY for interacting with web pages specifically inside the browser. These tools manage their own internal browser instance. Avoid launching a secondary OS-level browser (like `google-chrome`) via `launch_and_get_pid` when completing standard web tasks. When a web task is requested, directly use `dom_navigate` to browse.
     - Always check list_active_windows first. If a browser is already open, use its PID — never launch again.
-    - New tab: press_hotkey('ctrl+t') then navigate_to_url.
+    - New tab: press_hotkey('ctrl+t') then dom_navigate.
     - Never open a new browser window when one is already open.
     - Never click bookmark bar items when trying to search within a page.
     - For site search tasks, prefer a direct search-results URL in NAV_START when possible.
@@ -158,7 +158,7 @@ Before returning, confirm SUCCESS_EVIDENCE is visible:
 
 a. After app launch: take_screenshot to confirm the app loaded before starting
    element discovery.
-   After navigate_to_url: do NOT take_screenshot proactively — the function
+   After dom_navigate: do NOT take_screenshot proactively — the function
    already waits for the page to stabilise. Proceed directly to interaction.
    Exception: if the first element discovery attempt returns empty (unexpected
    redirect, login wall, CAPTCHA, error page), take_screenshot immediately to
@@ -174,9 +174,9 @@ Do NOT declare success based on expectation — only on observed screen state.
 ── NEVER ─────────────────────────────────────────────────────────────
 - Never invent or guess element_ids — only use IDs returned by find_ui_elements / wait_for_element.
 - Never pass a URL to press_hotkey.
-- Never call wait_for_element immediately after navigate_to_url.
+- Never call wait_for_element immediately after dom_navigate.
 - Never claim a toggle is active based on label text elsewhere on the page.
-- Never retry navigate_to_url more than twice.
+- Never retry dom_navigate more than twice.
 - Never open a new browser window when one is already open.
 - Never use set_text on a dropdown element.
 - Never click browser bookmark links for page search tasks.
