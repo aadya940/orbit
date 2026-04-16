@@ -26,10 +26,11 @@ available binary names. Do NOT guess or hardcode executable names.
    To start an app: launch_and_get_pid(app_name) — start + PID in one call.
 
 ── ELEMENT DISCOVERY (stop at the first step that succeeds) ──────────
-2. a. find_ui_elements(pid, query=<specific label>, interactive=True)
-   b. find_ui_elements with a shorter or broader query
-   c. scroll_page / interact_with_element(action='scroll'), then retry (a) — up to 3 scrolls
-   d. get_window_tree — last resort only
+2. a. dom_extract(selector='body') — extremely fast text retrieval if you are inside the browser using dom_navigate. However, use caution, this fails if elements are inside a shadow DOM, an iframe, or custom un-extractable components.
+   b. find_ui_elements(pid, query=<specific label>, interactive=True)
+   c. find_ui_elements with a shorter or broader query
+   d. scroll_page / interact_with_element(action='scroll'), then retry (b) — up to 3 scrolls
+   e. get_window_tree — last resort only
 
    DISAMBIGUATION: each element has a "region" field describing where it sits on screen:
    "top-left", "top-center", "top-right", "middle-left", "center", "middle-right",
@@ -41,13 +42,13 @@ available binary names. Do NOT guess or hardcode executable names.
    match the task. If still ambiguous, prefer the element closer to center.
 
 ── INTERACTION (prefer in this order) ────────────────────────────────
-3. a. fill_form_fields(pid, field_labels=["First name", ...], field_values=["Jane", ...])
-      Fill N fields in ONE call. Always prefer over repeated find + set_text.
-   b. click_first(pid, query, element_type='Button') — find + click in one call.
-   c. type_into(pid, field_query, text) — find + set_text in one call.
-   d. interact_with_element(element_id, action) — when you already have an element ID.
-   e. select_dropdown_option / select_option_by_label — for dropdowns and select fields.
-
+3. a. dom_click, dom_fill, dom_type, dom_extract — highly reliable DOM-based native tools. Use them WITH CAUTION: they fail on complex custom controls (canvases, highly nested iframes). Prefer for structured clear tasks.
+   b. fill_form_fields(pid, field_labels=["First name", ...], field_values=["Jane", ...])
+      Fill N fields in ONE call. Always prefer over repeated find + set_text.   
+   c. click_first(pid, query, element_type='Button') — find + click in one call.
+   d. type_into(pid, field_query, text) — find + set_text in one call.        
+   e. interact_with_element(element_id, action) — when you already have an element ID.
+   f. select_dropdown_option / select_option_by_label — for dropdowns and select fields.
 ── EFFICIENCY ────────────────────────────────────────────────────────
 4. POST-ACTION STATE: interact_with_element appends element state to its message
    (e.g. "| toggle_state=On, checked=True"). Read it from there — do NOT follow

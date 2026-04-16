@@ -148,14 +148,24 @@ class BrowserManager:
     async def _get_or_create_page(self) -> "Page":
         """Must be called with self._lock held."""
         if self._active_page is not None and not self._active_page.is_closed():
+            try: await self._active_page.bring_to_front()
+            except: pass
             return self._active_page
 
         pages = self._browser_context.pages
-        if pages:
-            self._active_page = pages[0]
+        # Sometimes Playwright crashes if we immediately close pages just launched
+        # It's safer to just skip about:blank tabs
+        valid_pages = [p for p in pages if p.url != 'about:blank']
+
+        if valid_pages:
+            self._active_page = valid_pages[-1]
+        elif pages:
+            self._active_page = pages[-1]
         else:
             self._active_page = await self._browser_context.new_page()
 
+        try: await self._active_page.bring_to_front()
+        except: pass
         return self._active_page
 
     async def _shutdown(self) -> None:
@@ -209,25 +219,16 @@ class BrowserManager:
         or create an empty dir if no persistent profile exists yet.
         """
         tmp = f"{_TMP_PROFILE_PREFIX}{uuid.uuid4().hex}"
-        _LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
-
+        
+        os.makedirs(os.path.join(tmp, "Default"), exist_ok=True)
         if os.path.exists(_PERSISTENT_PROFILE):
-            log.info("Copying persistent profile → ephemeral storage (%s)", tmp)
-            shutil.copytree(
-                _PERSISTENT_PROFILE,
-                tmp,
-                ignore=shutil.ignore_patterns(*_LOCK_FILES),
-            )
+            log.info("Copying credentials from persistent profile → ephemeral storage (%s)", tmp)
+            for f_name in ["Login Data", "Login Data-journal", "Cookies", "Web Data", "Web Data-journal"]:
+                src = os.path.join(_PERSISTENT_PROFILE, "Default", f_name)
+                if os.path.exists(src):
+                    shutil.copy2(src, os.path.join(tmp, "Default", f_name))
         else:
             log.info("No persistent profile found; starting fresh (%s)", tmp)
-            os.makedirs(tmp, exist_ok=True)
-
-        return tmp
-
-    @staticmethod
-    def _sync_profile_to_persistent(tmp_profile: str) -> None:
-        """Sync the ephemeral profile back to persistent storage."""
-        if not os.path.exists(tmp_profile):
             log.warning("Ephemeral profile dir missing; skipping sync: %s", tmp_profile)
             return
 
