@@ -8,6 +8,7 @@ from typing import Optional
 
 try:
     from playwright.async_api import async_playwright, BrowserContext, Page
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -23,8 +24,8 @@ _CHROME_FLAGS = [
     "--enable-accessibility",
     "--disable-gpu",
     "--no-sandbox",
-    "--disable-dev-shm-usage",          # Docker's /dev/shm is 64MB by default; Chrome will OOM-crash without this
-    "--window-size=1280,768",            # explicit size; --start-maximized is unreliable without a real WM
+    "--disable-dev-shm-usage",  # Docker's /dev/shm is 64MB by default; Chrome will OOM-crash without this
+    "--window-size=1280,768",  # explicit size; --start-maximized is unreliable without a real WM
     "--disable-blink-features=AutomationControlled",
 ]
 
@@ -79,7 +80,9 @@ class BrowserManager:
 
         async with self._lock:
             if self._playwright is not None:
-                raise BrowserManagerError("BrowserManager.start() called while already running.")
+                raise BrowserManagerError(
+                    "BrowserManager.start() called while already running."
+                )
 
             self._purge_stale_tmp_profiles()
             tmp_profile = self._prepare_tmp_profile()
@@ -87,9 +90,11 @@ class BrowserManager:
             try:
                 playwright = await async_playwright().start()
                 context = await playwright.chromium.launch_persistent_context(
-                    user_data_dir=tmp_profile, executable_path='/usr/bin/google-chrome',
+                    user_data_dir=tmp_profile,
+                    executable_path="/usr/bin/google-chrome",
                     headless=False,
                     args=_CHROME_FLAGS,
+                    ignore_default_args=["--enable-automation"],
                     ignore_https_errors=True,
                     no_viewport=True,
                 )
@@ -149,24 +154,35 @@ class BrowserManager:
     async def _get_or_create_page(self) -> "Page":
         """Must be called with self._lock held."""
         if self._active_page is not None and not self._active_page.is_closed():
-            try: await self._active_page.bring_to_front()
-            except: pass
+            try:
+                await self._active_page.bring_to_front()
+            except:
+                pass
             return self._active_page
 
         pages = self._browser_context.pages
         # Sometimes Playwright crashes if we immediately close pages just launched
         # It's safer to just skip about:blank tabs
-        valid_pages = [p for p in pages if p.url != 'about:blank']
+        valid_pages = [p for p in pages if p.url != "about:blank"]
 
         if valid_pages:
-            self._active_page = valid_pages[-1]
+            self._active_page = valid_pages[0]
         elif pages:
-            self._active_page = pages[-1]
+            self._active_page = pages[0]
+            # Try to close any extra about:blank tabs left behind by Playwright initialization
+            if len(pages) > 1:
+                for extr_page in pages[1:]:
+                    try:
+                        await extr_page.close()
+                    except:
+                        pass
         else:
             self._active_page = await self._browser_context.new_page()
 
-        try: await self._active_page.bring_to_front()
-        except: pass
+        try:
+            await self._active_page.bring_to_front()
+        except:
+            pass
         return self._active_page
 
     async def _shutdown(self) -> None:
@@ -200,7 +216,9 @@ class BrowserManager:
         log.info("BrowserManager stopped.")
 
         if close_error is not None:
-            raise BrowserManagerError("Browser context did not close cleanly.") from close_error
+            raise BrowserManagerError(
+                "Browser context did not close cleanly."
+            ) from close_error
 
     # ------------------------------------------------------------------
     # Profile helpers (synchronous – called from async methods)
@@ -220,11 +238,20 @@ class BrowserManager:
         or create an empty dir if no persistent profile exists yet.
         """
         tmp = f"{_TMP_PROFILE_PREFIX}{uuid.uuid4().hex}"
-        
+
         os.makedirs(os.path.join(tmp, "Default"), exist_ok=True)
         if os.path.exists(_PERSISTENT_PROFILE):
-            log.info("Copying credentials from persistent profile → ephemeral storage (%s)", tmp)
-            for f_name in ["Login Data", "Login Data-journal", "Cookies", "Web Data", "Web Data-journal"]:
+            log.info(
+                "Copying credentials from persistent profile → ephemeral storage (%s)",
+                tmp,
+            )
+            for f_name in [
+                "Login Data",
+                "Login Data-journal",
+                "Cookies",
+                "Web Data",
+                "Web Data-journal",
+            ]:
                 src = os.path.join(_PERSISTENT_PROFILE, "Default", f_name)
                 if os.path.exists(src):
                     shutil.copy2(src, os.path.join(tmp, "Default", f_name))
@@ -234,7 +261,9 @@ class BrowserManager:
             return
 
         _LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
-        log.info("Syncing ephemeral profile → persistent storage (%s)", _PERSISTENT_PROFILE)
+        log.info(
+            "Syncing ephemeral profile → persistent storage (%s)", _PERSISTENT_PROFILE
+        )
 
         try:
             shutil.copytree(
