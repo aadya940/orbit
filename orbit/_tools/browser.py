@@ -136,6 +136,11 @@ class BrowserManager:
         """The current active page, or None if not yet created."""
         return self._active_page
 
+    @property
+    def active_frame_or_page(self):
+        """Returns the active frame (if set) or the active page."""
+        return getattr(self, "active_frame", None) or self._active_page
+
     # ------------------------------------------------------------------
     # Async context manager support
     # ------------------------------------------------------------------
@@ -257,6 +262,12 @@ class BrowserManager:
                     shutil.copy2(src, os.path.join(tmp, "Default", f_name))
         else:
             log.info("No persistent profile found; starting fresh (%s)", tmp)
+        return tmp
+
+    @staticmethod
+    def _sync_profile_to_persistent(tmp_profile: str) -> None:
+        """Sync ephemeral profile back to persistent storage."""
+        if not os.path.exists(tmp_profile):
             log.warning("Ephemeral profile dir missing; skipping sync: %s", tmp_profile)
             return
 
