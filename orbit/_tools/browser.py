@@ -260,18 +260,22 @@ class BrowserManager:
             log.warning("Ephemeral profile dir missing; skipping sync: %s", tmp_profile)
             return
 
-        _LOCK_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
         log.info(
-            "Syncing ephemeral profile → persistent storage (%s)", _PERSISTENT_PROFILE
+            "Syncing ephemeral profile credentials → persistent storage (%s)", _PERSISTENT_PROFILE
         )
 
         try:
-            shutil.copytree(
-                tmp_profile,
-                _PERSISTENT_PROFILE,
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns(*_LOCK_FILES),
-            )
+            os.makedirs(os.path.join(_PERSISTENT_PROFILE, "Default"), exist_ok=True)
+            for f_name in [
+                "Login Data",
+                "Login Data-journal",
+                "Cookies",
+                "Web Data",
+                "Web Data-journal",
+            ]:
+                src = os.path.join(tmp_profile, "Default", f_name)
+                if os.path.exists(src):
+                    shutil.copy2(src, os.path.join(_PERSISTENT_PROFILE, "Default", f_name))
         except Exception as exc:
             log.error("Profile sync failed: %s", exc)
 
