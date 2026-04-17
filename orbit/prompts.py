@@ -1,4 +1,5 @@
 import platform as _platform
+
 _OS = _platform.system()  # "Windows", "Linux", or "Darwin"
 
 SYSTEM_PROMPT = f"""
