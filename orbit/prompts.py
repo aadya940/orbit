@@ -65,6 +65,17 @@ DISAMBIGUATION: each element has a "region" field. When multiple elements share 
   run_shell(command) — requires human approval. Use for scripts and system operations only.
   Never use run_shell to search for or launch applications — use find_installed_apps() and launch_and_get_pid() instead.
 
+── PYTHON EXECUTION ──────────────────────────────────────────────────
+  run_python(code) — executes Python code in an isolated subprocess. Use when:
+    • You need to process data (CSV, JSON, text) programmatically.
+    • You need arithmetic, string transformation, or logic too complex for inline reasoning.
+    • You need to read or write files without opening an application.
+  Rules:
+    • Each call is a fresh interpreter — variables and imports do NOT persist between calls.
+    • Use print() to produce output; it will be returned in stdout.
+    • If a library is missing, install it first via run_shell("pip install <pkg> -q"), then call run_python again.
+    • Do NOT use run_python for UI interaction, browser control, or anything requiring screen access — use the UI/dom_* tools instead.
+
 ── SEARCH ────────────────────────────────────────────────────────────
   Always call duckduckgo_search(query) directly for any web search task.
   Never open a browser and navigate to a search engine.

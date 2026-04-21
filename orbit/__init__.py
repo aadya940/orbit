@@ -4,6 +4,7 @@ from .runner import Agent, RunResult
 from .session import Session, session
 from .action import BaseActionAgent
 from .verbs import Do, Read, Check, Navigate, Fill
+from ._tools.python_executor import PythonExecutor
 
 __all__ = [
     # Core
@@ -19,6 +20,8 @@ __all__ = [
     "Check",
     "Navigate",
     "Fill",
+    # Tools
+    "PythonExecutor",
     # Internal (rarely needed directly)
     "build_agents",
     "OculOSManager",
