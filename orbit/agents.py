@@ -37,6 +37,7 @@ from ._tools.ui import (
     get_page_text,
     wait_for_text,
 )
+from ._tools.python_executor import run_python
 from ._tools.clipboard import (
     clipboard_get,
     clipboard_set,
@@ -432,6 +433,7 @@ def build_desktop_agent(
             get_page_text,
             wait_for_text,
             run_shell_approval,
+            run_python,
         ]
         + (extra_tools or []),
     )
