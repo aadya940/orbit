@@ -58,10 +58,18 @@ async def dom_extract(selector: str = "body") -> Dict[str, Any]:
         return {"status": "error", "message": "Browser is not active."}
     try:
         elements = await global_browser.active_frame_or_page.query_selector_all(selector)
-        texts = [await el.inner_text() for el in elements]
+        texts = []
+        for el in elements:
+            try:
+                texts.append(await el.inner_text())
+            except Exception:
+                continue
         return {"status": "success", "data": texts}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        msg = str(e)
+        if "execution context was destroyed" in msg.lower() or "navigation" in msg.lower():
+            return {"status": "error", "message": "Page navigated during extraction — call dom_extract again once the page has settled."}
+        return {"status": "error", "message": msg}
 
 async def dom_list_frames() -> Dict[str, Any]:
     """List all frames/iframes on the current page."""
@@ -69,21 +77,32 @@ async def dom_list_frames() -> Dict[str, Any]:
     page = global_browser.active_page
     if not page:
         return {"status": "error", "message": "Browser is not active."}
-    
+
     frames = []
     for i, frame in enumerate(page.frames):
         frames.append({
             "index": i,
             "name": frame.name,
             "url": frame.url,
-            "selector": None
+            "selector": None,
         })
-    
-    for iframe in await page.query_selector_all("iframe"):
-        src = await iframe.get_attribute("src") or ""
-        for f in frames:
-            if src and urlparse(src).path == urlparse(f["url"]).path:
-                f["selector"] = f"iframe[src*='{src.split('?')[0]}']"
+
+    # query_selector_all can throw if the page navigates while we're querying.
+    # Catch the destroyed-context error gracefully and return frames without selectors.
+    try:
+        for iframe in await page.query_selector_all("iframe"):
+            try:
+                src = await iframe.get_attribute("src") or ""
+            except Exception:
+                continue
+            for f in frames:
+                if src and urlparse(src).path == urlparse(f["url"]).path:
+                    f["selector"] = f"iframe[src*='{src.split('?')[0]}']"
+    except Exception as e:
+        if "execution context was destroyed" in str(e).lower() or "navigation" in str(e).lower():
+            return {"status": "success", "frames": frames, "note": "Page navigated during frame scan; selectors unavailable."}
+        return {"status": "error", "message": str(e)}
+
     return {"status": "success", "frames": frames}
 
 async def dom_switch_frame(selector_or_index=None) -> Dict[str, Any]:
@@ -164,7 +183,6 @@ async def dom_get_interactive_elements() -> Dict[str, Any]:
                     if (seen.has(dedupeKey)) continue;
                     seen.add(dedupeKey);
 
-                    // Build the most specific stable selector available.
                     let selector = '';
                     if (el.id) {
                         selector = '#' + CSS.escape(el.id);
@@ -200,7 +218,10 @@ async def dom_get_interactive_elements() -> Dict[str, Any]:
             "elements": elements,
         }
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        msg = str(e)
+        if "execution context was destroyed" in msg.lower() or "navigation" in msg.lower():
+            return {"status": "error", "message": "Page navigated during element scan — call dom_get_interactive_elements again once the page has settled."}
+        return {"status": "error", "message": msg}
 
 
 async def dom_click_text(text: str) -> Dict[str, Any]:
