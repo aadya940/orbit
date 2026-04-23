@@ -38,7 +38,7 @@ Python controls the flow.
 
 Instead of one monolithic agent, Orbit breaks execution into **independent steps**:
 
-`Do` · `Read` · `Check` · `Navigate` · `Fill`
+`Do` · `Read` · `Check` · `Navigate` · `Fill` · `Bootstrap`
 
 Each step runs its own model, has its own budget, and returns typed output. All steps share context.
 
@@ -60,7 +60,7 @@ Most agents see pixels.
 
 **Orbit sees the UI.**
 
-It reads the OS accessibility tree , screenshots only when needed, no DOM hacks. Works across desktop apps and browsers with lower token usage.
+It reads the OS accessibility tree and drives the browser via its live DOM. Screenshots only when needed. Works across desktop apps, browsers, and Electron apps — including Cloudflare-protected sites.
 
 
 ## Quickstart
@@ -147,6 +147,23 @@ async def main():
 
         if await Check("Add to Cart button is visible", session=s, llm=action_model, max_steps=30).check():
             await Do("click Add to Cart", session=s, llm=action_model, max_steps=30).run()
+
+asyncio.run(main())
+```
+
+
+### Bootstrap — install packages before the workflow starts
+
+```python
+from orbit import Bootstrap, Do, session
+import asyncio
+
+async def main():
+    # Install system packages once — no LLM, pure subprocess
+    await Bootstrap(["ffmpeg", "imagemagick"]).run()
+
+    async with session() as s:
+        await Do("Convert video.mp4 to a GIF using ffmpeg", session=s).run()
 
 asyncio.run(main())
 ```

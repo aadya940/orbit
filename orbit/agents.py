@@ -54,6 +54,11 @@ from ._tools.playwright_tools import (
     dom_click_text,
     dom_get_interactive_elements,
     dom_upload_file,
+    dom_select_option,
+    dom_fill_by_label,
+    dom_open_browser,
+    dom_connect_cdp,
+    dom_switch_browser,
 )
 
 from ._tools.search import duckduckgo_search
@@ -409,6 +414,11 @@ def build_desktop_agent(
             dom_click_text,
             dom_get_interactive_elements,
             dom_upload_file,
+            dom_select_option,
+            dom_fill_by_label,
+            dom_open_browser,
+            dom_connect_cdp,
+            dom_switch_browser,
             list_directory,
             duckduckgo_search,
             move_file_approval,

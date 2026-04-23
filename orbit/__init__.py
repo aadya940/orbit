@@ -3,7 +3,7 @@ from .daemon import OculOSManager
 from .runner import Agent, RunResult
 from .session import Session, session
 from .action import BaseActionAgent
-from .verbs import Do, Read, Check, Navigate, Fill
+from .verbs import Do, Read, Check, Navigate, Fill, Bootstrap
 from ._tools.python_executor import PythonExecutor
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "Check",
     "Navigate",
     "Fill",
+    "Bootstrap",
     # Tools
     "PythonExecutor",
     # Internal (rarely needed directly)

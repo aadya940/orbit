@@ -1,5 +1,8 @@
 """Built-in verb classes — low-level screen primitives for programmatic control."""
 
+import asyncio
+import platform
+import shlex
 from typing import Optional, Type
 
 from .action import BaseActionAgent
@@ -133,4 +136,52 @@ class Fill(BaseActionAgent):
             f"Enter these values into the form fields:\n{fields}\n"
             "Use fill_form_fields where possible for efficiency. "
             "Do NOT submit the form — only fill the fields."
+        )
+
+
+class Bootstrap:
+    """Pre-graph node: install apt packages before the workflow begins.
+
+    Runs ``apt-get install -y <packages>`` in a subprocess — no LLM involved.
+    Call this at the start of a workflow that needs tools not pre-installed in
+    the Docker image (e.g. ffmpeg, imagemagick, wkhtmltopdf).
+
+    Usage::
+
+        result = await Bootstrap(["ffmpeg", "imagemagick"]).run()
+        if result.status != "success":
+            raise RuntimeError(result.summary)
+    """
+
+    def __init__(self, packages: list[str]) -> None:
+        self.packages = packages
+
+    async def run(self) -> RunResult:
+        if not self.packages:
+            return RunResult(status="success", summary="No packages to install.")
+        if platform.system() != "Linux":
+            return RunResult(
+                status="failed",
+                summary="Bootstrap only supports apt-get on Linux.",
+                errors=[f"Unsupported OS: {platform.system()}"],
+            )
+        pkg_str = " ".join(shlex.quote(p) for p in self.packages)
+        cmd = f"apt-get install -y {pkg_str}"
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode(errors="replace")
+        if proc.returncode == 0:
+            return RunResult(
+                status="success",
+                summary=f"Installed: {', '.join(self.packages)}",
+                output=output,
+            )
+        return RunResult(
+            status="failed",
+            summary=f"apt-get failed (exit {proc.returncode}): {self.packages}",
+            errors=[output],
         )

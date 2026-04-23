@@ -241,19 +241,173 @@ async def dom_upload_file(selector: str, path: str) -> Dict[str, Any]:
     try:
         frame = global_browser.active_frame_or_page
         # Make the input visible/interactable if hidden, then set files
-        await frame.evaluate(f"""
-            (function() {{
-                const el = document.querySelector({repr(selector)});
-                if (el) {{
+        await frame.evaluate("""
+            (s) => {
+                const el = document.querySelector(s);
+                if (el) {
                     el.style.display = 'block';
                     el.style.visibility = 'visible';
                     el.style.opacity = '1';
-                }}
-            }})()
-        """)
+                }
+            }
+        """, selector)
         await frame.set_input_files(selector, path)
         return {"status": "success", "message": f"File '{path}' set on '{selector}'"}
     except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def dom_select_option(selector: str, label: str) -> Dict[str, Any]:
+    """Select an option in a <select> element or ARIA combobox/listbox dropdown.
+
+    Handles both native HTML <select> (via Playwright's select_option) and
+    custom ARIA dropdowns (role="combobox", role="listbox") by clicking the
+    trigger first, waiting for the option list, then clicking the target item.
+
+    selector: CSS selector for the <select> or combobox trigger element,
+              e.g. 'select[name="country"]' or '[role="combobox"]'
+    label:    The visible option text to select (case-insensitive match).
+    """
+    await global_browser.ensure_active_page()
+    if not global_browser.active_page:
+        return {"status": "error", "message": "Browser is not active."}
+    try:
+        frame = global_browser.active_frame_or_page
+        # Detect element type — pass selector as arg to avoid injection issues
+        tag = await frame.evaluate(
+            "(s) => document.querySelector(s)?.tagName?.toLowerCase()", selector
+        )
+        if tag == "select":
+            await frame.select_option(selector, label=label, timeout=5000)
+            return {"status": "success", "message": f"Selected '{label}' in native <select> {selector}"}
+        # Custom ARIA combobox / listbox — click to open, then click the option
+        await frame.click(selector, timeout=5000)
+        await frame.wait_for_selector(
+            '[role="option"], [role="listbox"] li, [role="menu"] [role="menuitem"]',
+            timeout=3000,
+        )
+        clicked = await frame.evaluate("""
+            (label) => {
+                const candidates = [
+                    ...document.querySelectorAll('[role="option"]'),
+                    ...document.querySelectorAll('[role="listbox"] li'),
+                    ...document.querySelectorAll('[role="menuitem"]'),
+                ];
+                const target = candidates.find(el =>
+                    el.textContent.trim().toLowerCase() === label.toLowerCase()
+                );
+                if (target) { target.click(); return true; }
+                return false;
+            }
+        """, label)
+        if clicked:
+            return {"status": "success", "message": f"Selected '{label}' via ARIA combobox {selector}"}
+        return {"status": "error", "message": f"Option '{label}' not found in dropdown {selector}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def dom_fill_by_label(label_text: str, value: str) -> Dict[str, Any]:
+    """Fill an input by finding its associated <label> text.
+
+    Searches for a <label> whose visible text includes *label_text*
+    (case-insensitive), then fills the associated <input>, <select>, or
+    <textarea> via the label's `for` attribute or DOM proximity.
+
+    Useful for modals (e.g. LinkedIn Easy Apply) where input selectors are
+    not predictable but label text is stable.
+
+    label_text: Visible label text, e.g. "First name" or "Phone number"
+    value:      Text to fill into the associated input.
+    """
+    await global_browser.ensure_active_page()
+    if not global_browser.active_page:
+        return {"status": "error", "message": "Browser is not active."}
+    try:
+        frame = global_browser.active_frame_or_page
+        selector = await frame.evaluate("""
+            (labelText) => {
+                const labels = [...document.querySelectorAll('label')];
+                const label = labels.find(l =>
+                    l.textContent.trim().toLowerCase().includes(labelText.toLowerCase())
+                );
+                if (!label) return null;
+                if (label.htmlFor) {
+                    const el = document.getElementById(label.htmlFor);
+                    if (el) return '#' + CSS.escape(label.htmlFor);
+                }
+                // Implicit label — find first input/select/textarea child
+                let el = label.querySelector('input,select,textarea');
+                // If not inside the label, check the next sibling (may be a wrapper div)
+                if (!el) {
+                    const sib = label.nextElementSibling;
+                    if (sib) {
+                        const tag = sib.tagName.toLowerCase();
+                        el = (tag === 'input' || tag === 'select' || tag === 'textarea')
+                            ? sib
+                            : sib.querySelector('input,select,textarea');
+                    }
+                }
+                if (!el) return null;
+                if (el.id) return '#' + CSS.escape(el.id);
+                if (el.name) return el.tagName.toLowerCase() + '[name="' + el.name + '"]';
+                return null;
+            }
+        """, label_text)
+        if not selector:
+            return {"status": "error", "message": f"No input found for label '{label_text}'"}
+        await frame.fill(selector, value, timeout=5000)
+        return {"status": "success", "message": f"Filled '{label_text}' ({selector}) with '{value}'"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def dom_open_browser(name: str = "main") -> Dict[str, Any]:
+    """Launch a second Chrome instance registered under *name*.
+
+    Use this only when a second browser is needed alongside one already open.
+    The new browser immediately becomes the active target for all dom_* tools.
+    For the first/only browser you do NOT need this — dom_navigate auto-launches.
+
+    name: Registry key, e.g. "secondary", "chrome2"
+    """
+    try:
+        from .browser import open_browser
+        await open_browser(name)
+        return {"status": "success", "message": f"Browser '{name}' launched and active"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def dom_connect_cdp(port: int, name: str) -> Dict[str, Any]:
+    """Attach dom_* tools to an externally-running Chromium app via CDP.
+
+    The target app must have been launched with --remote-debugging-port=<port>.
+    Common debug ports: 9222 (Chrome default), 9229 (many Electron apps).
+    After this call, the connected app becomes the active target for dom_* tools.
+
+    port: CDP debug port the app is listening on
+    name: Registry key, e.g. "electron_app", "vscode", "slack"
+    """
+    try:
+        from .browser import connect_browser_cdp
+        await connect_browser_cdp(port, name)
+        return {"status": "success", "message": f"Connected to CDP port {port}, registered as '{name}'"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def dom_switch_browser(name: str) -> Dict[str, Any]:
+    """Switch which registered browser all subsequent dom_* calls target.
+
+    name: Registry key previously used in dom_open_browser or dom_connect_cdp
+          (the first browser is always "main")
+    """
+    try:
+        from .browser import switch_active_browser
+        switch_active_browser(name)
+        return {"status": "success", "message": f"Active browser switched to '{name}'"}
+    except KeyError as e:
         return {"status": "error", "message": str(e)}
 
 
