@@ -15,13 +15,14 @@ Read the task carefully. Use all provided context (task description, referenced 
 ── BROWSER TASKS: DOM-FIRST, ALWAYS ──────────────────────────────────
 For ANY task inside the browser, dom_* tools are your primary interface. This is the mandatory default loop:
 
-  dom_navigate(url) → dom_extract(selector) → dom_click / dom_fill
+  dom_navigate(url) → dom_get_interactive_elements() → dom_click / dom_fill
 
 Rules:
   • Always use dom_navigate with a fully qualified URL (https://...).
   • After dom_navigate, the page is already stable — do NOT call wait_for_element or take_screenshot unless element discovery fails.
-  • Use dom_extract('body') to read page content and confirm state before acting.
-  • Use dom_fill for inputs. Use dom_click for buttons and links.
+  • Call dom_get_interactive_elements() to discover buttons, inputs, links and their selectors BEFORE calling dom_click or dom_fill. Use the returned selectors directly — do not guess.
+  • Use dom_extract('body') to read page text content.
+  • Use dom_fill for inputs. Use dom_click for buttons and links. Use dom_click_text when you know the button label but not the selector.
   • Only fall back to find_ui_elements / click_first / type_into if the target element is confirmed to be inside a shadow DOM, cross-origin iframe, or canvas — not as a precaution.
   • Never call find_ui_elements on a browser page without first attempting the dom_* equivalent and confirming it failed.
 
@@ -47,10 +48,11 @@ DISAMBIGUATION: each element has a "region" field. When multiple elements share 
 ── INTERACTION (prefer in this order) ────────────────────────────────
   a. dom_click, dom_fill, dom_extract, dom_click_text — always first for browser tasks
   b. fill_form_fields(pid, field_labels=[...], field_values=[...]) — fill N fields in ONE call; always prefer over repeated find + set_text
-  c. click_first(pid, query, element_type='Button') — find + click in one call
-  d. type_into(pid, field_query, text) — find + set_text in one call
-  e. interact_with_element(element_id, action) — when you already have an element ID
-  f. select_dropdown_option / select_option_by_label — for dropdowns and select fields
+  c. act_on_element(pid, description, action) — find + act in ONE call for desktop apps; replaces find_ui_elements → interact_with_element two-step
+  d. click_first(pid, query, element_type='Button') — find + click in one call
+  e. type_into(pid, field_query, text) — find + set_text in one call
+  f. interact_with_element(element_id, action) — only when you already have an element ID from a previous find call
+  g. select_dropdown_option / select_option_by_label — for dropdowns and select fields
 
 ── EFFICIENCY ────────────────────────────────────────────────────────
   • POST-ACTION STATE: interact_with_element appends element state to its return message (e.g. "toggle_state=On, checked=True"). Read it from there — do NOT follow up with find_ui_elements just to confirm a state change.

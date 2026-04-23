@@ -25,6 +25,7 @@ from ._tools.ui import (
     get_window_tree,
     get_window_tree_hwnd,
     interact_with_element,
+    act_on_element,
     wait_for_element,
     click_first,
     type_into,
@@ -50,6 +51,7 @@ from ._tools.playwright_tools import (
     dom_switch_frame,
     dom_switch_frame_default,
     dom_click_text,
+    dom_get_interactive_elements,
 )
 
 from ._tools.search import duckduckgo_search
@@ -387,6 +389,7 @@ def build_desktop_agent(
             get_window_tree,
             get_window_tree_hwnd,
             interact_with_element,
+            act_on_element,
             wait_for_element,
             scroll_page,
             get_form_fields,
@@ -402,6 +405,7 @@ def build_desktop_agent(
             dom_switch_frame,
             dom_switch_frame_default,
             dom_click_text,
+            dom_get_interactive_elements,
             list_directory,
             duckduckgo_search,
             move_file_approval,

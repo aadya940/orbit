@@ -784,6 +784,89 @@ async def interact_with_element(
     return {"status": "error", "message": f"Interaction failed: {msg}"}
 
 
+async def act_on_element(
+    pid: int,
+    description: str,
+    action: str,
+    text_input: Optional[str] = None,
+    element_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Find a UI element by plain-text description and act on it in a single call.
+    Replaces the find_ui_elements → interact_with_element two-step pattern.
+
+    Args:
+        pid: Process ID of the window.
+        description: Natural language label of the element (e.g. "Submit", "Email address field").
+        action: One of: 'click', 'set_text', 'send_keys', 'toggle', 'expand', 'collapse', 'select'.
+        text_input: Required for 'set_text' and 'send_keys' actions.
+        element_type: Optional semantic role hint to narrow the search (e.g. 'Button', 'Edit').
+    """
+    def _find(query: str) -> list:
+        return oculos_client.find_elements(
+            pid, query=query, element_type=element_type, interactive=True
+        )
+
+    def _act(eid: str) -> None:
+        if action == "click":
+            oculos_client.click(eid)
+        elif action == "set_text" and text_input is not None:
+            oculos_client.set_text(eid, text_input)
+        elif action == "send_keys" and text_input is not None:
+            oculos_client.send_keys(eid, text_input)
+        elif action == "toggle":
+            oculos_client.toggle(eid)
+        elif action == "expand":
+            oculos_client.expand(eid)
+        elif action == "collapse":
+            oculos_client.collapse(eid)
+        elif action == "select":
+            oculos_client.select(eid)
+        else:
+            raise ValueError(
+                f"Invalid action '{action}' or missing text_input for set_text/send_keys."
+            )
+
+    try:
+        elements = _find(description) or _find(description.lower())
+        if not elements:
+            return {
+                "status": "error",
+                "message": (
+                    f"No interactive element matching '{description}' found in window {pid}. "
+                    "Try a shorter substring, a different element_type, or check the window is focused."
+                ),
+            }
+
+        el = elements[0]
+        eid = el["oculos_id"]
+        _element_meta[eid] = {"pid": pid, "query": description, "element_type": element_type}
+
+        try:
+            _act(eid)
+        except Exception as e:
+            # Stale element — re-find and retry once
+            fresh = _find(description) or _find(description.lower())
+            if fresh:
+                fresh_eid = fresh[0]["oculos_id"]
+                _element_meta[fresh_eid] = {"pid": pid, "query": description, "element_type": element_type}
+                _act(fresh_eid)
+                eid = fresh_eid
+                el = fresh[0]
+            else:
+                raise e
+
+        _invalidate_discovery_cache()
+        el_name = el.get("name") or el.get("title") or description
+        return {
+            "status": "success",
+            "message": f"Performed '{action}' on '{el_name}'.",
+            "element": {"name": el_name, "role": el.get("element_type"), "id": eid},
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"act_on_element failed: {str(e)}"}
+
+
 _BROWSER_CHROME_MARKERS = (
     # Address bar — label varies with focus/state
     "address and search bar",

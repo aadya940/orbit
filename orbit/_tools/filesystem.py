@@ -26,7 +26,18 @@ def get_system_info() -> Dict[str, Any]:
     that involves saving files or navigating the file system.
     """
     try:
-        username = os.getlogin()
+        # os.getlogin() requires a TTY and fails in Docker / daemon processes.
+        # Fall back through environment variables and the home dir basename.
+        try:
+            username = os.getlogin()
+        except OSError:
+            username = (
+                os.environ.get("USER")
+                or os.environ.get("LOGNAME")
+                or os.environ.get("USERNAME")
+                or os.path.basename(os.path.expanduser("~"))
+                or "unknown"
+            )
         home = str(Path.home())
         desktop = str(Path.home() / "Desktop")
         return {

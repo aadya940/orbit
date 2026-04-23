@@ -62,6 +62,7 @@ async def dom_extract(selector: str = "body") -> Dict[str, Any]:
         return {"status": "success", "data": texts}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 async def dom_list_frames() -> Dict[str, Any]:
     """List all frames/iframes on the current page."""
     await global_browser.ensure_active_page()
@@ -111,6 +112,96 @@ async def dom_switch_frame_default() -> Dict[str, Any]:
     """Switch back to the main document frame."""
     global_browser.active_frame = None
     return {"status": "success", "frame": "main"}
+
+async def dom_get_interactive_elements() -> Dict[str, Any]:
+    """
+    Returns all visible, interactive elements on the current page — buttons, links,
+    inputs, selects, textareas — each with its type, display text, and a CSS selector
+    you can pass directly to dom_click or dom_fill.
+
+    Call this before dom_click or dom_fill when you don't know the exact selector.
+    It scans the live DOM so the selectors are guaranteed to exist on the current page.
+    """
+    await global_browser.ensure_active_page()
+    if not global_browser.active_page:
+        return {"status": "error", "message": "Browser is not active."}
+    try:
+        page = global_browser.active_frame_or_page
+        elements = await page.evaluate("""() => {
+            const results = [];
+            const seen = new Set();
+            const queries = [
+                'button:not([disabled])',
+                'a[href]',
+                'input:not([type="hidden"]):not([disabled])',
+                'select:not([disabled])',
+                'textarea:not([disabled])',
+                '[role="button"]:not([disabled])',
+                '[role="link"]',
+                '[role="menuitem"]',
+                '[role="tab"]',
+                '[role="checkbox"]',
+                '[role="radio"]',
+                '[contenteditable="true"]',
+            ];
+            for (const q of queries) {
+                for (const el of document.querySelectorAll(q)) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    const tag = el.tagName.toLowerCase();
+                    const inputType = el.type || '';
+                    const text = (
+                        el.innerText ||
+                        el.value ||
+                        el.placeholder ||
+                        el.getAttribute('aria-label') ||
+                        el.getAttribute('title') ||
+                        el.getAttribute('alt') ||
+                        ''
+                    ).trim().replace(/\\s+/g, ' ').slice(0, 100);
+
+                    const dedupeKey = `${tag}|${inputType}|${text}`;
+                    if (seen.has(dedupeKey)) continue;
+                    seen.add(dedupeKey);
+
+                    // Build the most specific stable selector available.
+                    let selector = '';
+                    if (el.id) {
+                        selector = '#' + CSS.escape(el.id);
+                    } else if (el.getAttribute('data-testid')) {
+                        selector = `[data-testid="${el.getAttribute('data-testid')}"]`;
+                    } else if (el.getAttribute('name')) {
+                        selector = `${tag}[name="${el.getAttribute('name')}"]`;
+                    } else if (el.getAttribute('aria-label')) {
+                        selector = `[aria-label="${el.getAttribute('aria-label')}"]`;
+                    } else if (el.getAttribute('placeholder')) {
+                        selector = `${tag}[placeholder="${el.getAttribute('placeholder')}"]`;
+                    } else {
+                        selector = q;
+                    }
+
+                    const entry = {
+                        type: tag === 'a' ? 'link' : (inputType || tag),
+                        text: text || null,
+                        selector: selector,
+                    };
+                    if (el.placeholder) entry.placeholder = el.placeholder;
+                    if (el.href) entry.href = el.href;
+                    results.push(entry);
+                    if (results.length >= 60) return results;
+                }
+            }
+            return results;
+        }""")
+        return {
+            "status": "success",
+            "url": global_browser.active_page.url,
+            "count": len(elements),
+            "elements": elements,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 
 async def dom_click_text(text: str) -> Dict[str, Any]:
     """Click an element by its text content using the DOM."""
