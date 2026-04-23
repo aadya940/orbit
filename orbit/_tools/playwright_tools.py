@@ -224,6 +224,39 @@ async def dom_get_interactive_elements() -> Dict[str, Any]:
         return {"status": "error", "message": msg}
 
 
+async def dom_upload_file(selector: str, path: str) -> Dict[str, Any]:
+    """Upload a file to a file input element using the DOM.
+
+    Works with hidden <input type="file"> elements — no file dialog is opened.
+    Use this instead of upload_file when the browser's file upload button does
+    not open a native file dialog (e.g. LinkedIn, Greenhouse, Lever).
+
+    selector: CSS selector for the <input type="file"> element, e.g.
+              'input[type="file"]' or '.jobs-easy-apply-modal input[type="file"]'
+    path:     Absolute path to the file on the server, e.g. '/workspace/RESUME.pdf'
+    """
+    await global_browser.ensure_active_page()
+    if not global_browser.active_page:
+        return {"status": "error", "message": "Browser is not active."}
+    try:
+        frame = global_browser.active_frame_or_page
+        # Make the input visible/interactable if hidden, then set files
+        await frame.evaluate(f"""
+            (function() {{
+                const el = document.querySelector({repr(selector)});
+                if (el) {{
+                    el.style.display = 'block';
+                    el.style.visibility = 'visible';
+                    el.style.opacity = '1';
+                }}
+            }})()
+        """)
+        await frame.set_input_files(selector, path)
+        return {"status": "success", "message": f"File '{path}' set on '{selector}'"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 async def dom_click_text(text: str) -> Dict[str, Any]:
     """Click an element by its text content using the DOM."""
     await global_browser.ensure_active_page()

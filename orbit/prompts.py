@@ -100,9 +100,14 @@ TOGGLES / SWITCHES
      If state did not change: retry once. Still failing: request_human.
 
 FILE UPLOADS
-  a. find_ui_elements(query='Upload', element_type='Button') → upload_file(element_id, path)
-  b. Never navigate the file dialog manually.
-  c. If the task specifies a file path, call upload_file with that exact path even if a file is already shown — a pre-filled file does NOT satisfy an explicit upload requirement. Do not click Next/Continue until upload_file has been called.
+  a. For browser file inputs: dom_upload_file(selector, path) — directly sets the file on the
+     <input type="file"> element via DOM. No dialog opens. This is the preferred method for all
+     browser-based file uploads (LinkedIn, Greenhouse, Lever, etc.).
+     Selector: use '.jobs-easy-apply-modal input[type="file"]' for LinkedIn modals, or
+     'input[type="file"]' as a fallback.
+  b. For native desktop file dialogs only: find_ui_elements(query='Upload', element_type='Button') → upload_file(element_id, path)
+  c. Never navigate the file dialog manually.
+  d. If the task specifies a file path, call dom_upload_file (browser) or upload_file (desktop) with that exact path even if a file is already shown — a pre-filled file does NOT satisfy an explicit upload requirement. Do not click Next/Continue until the upload call has succeeded.
 
 CONTEXT MENUS (PopupHost)
   list_active_windows → get_popuphost_menu_window(pid) → find_ui_elements_hwnd(hwnd, query) → interact_with_element
@@ -146,6 +151,9 @@ Confirm SUCCESS_EVIDENCE is visible before returning:
   • Do NOT declare success based on expectation — only on observed screen state.
 
 ── NEVER ─────────────────────────────────────────────────────────────
+  • Never use fill_form_fields, act_on_element(set_text), or type_into to fill text inputs
+    in a browser window — AT-SPI2 InsertText is not supported by Chrome for web content.
+    Always use dom_fill(selector, value) for browser text inputs.
   • Never use find_ui_elements on a browser page without first trying the dom_* equivalent.
   • Never invent or guess element_ids — only use IDs returned by find_ui_elements / wait_for_element.
   • Never pass a URL to press_hotkey.
