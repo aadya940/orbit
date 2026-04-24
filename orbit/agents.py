@@ -59,6 +59,8 @@ from ._tools.playwright_tools import (
     dom_open_browser,
     dom_connect_cdp,
     dom_switch_browser,
+    dom_solve_turnstile,
+    dom_run,
 )
 
 from ._tools.search import duckduckgo_search
@@ -419,6 +421,8 @@ def build_desktop_agent(
             dom_open_browser,
             dom_connect_cdp,
             dom_switch_browser,
+            dom_solve_turnstile,
+            dom_run,
             list_directory,
             duckduckgo_search,
             move_file_approval,

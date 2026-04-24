@@ -152,9 +152,33 @@ FORWARD_ACTION not found by click_first:
   can_change → domain may change when the step requires it
   Verify current domain via get_form_fields (address bar) before any cross-domain action.
 
+── DOM ESCAPE HATCH ───────────────────────────────────────────────────
+dom_run(code) executes arbitrary async Playwright Python against the active page.
+Use it for browser interactions not covered by other dom_* tools:
+  • Hover-triggered menus  : await page.hover('selector')
+  • Keyboard navigation    : await page.keyboard.press('Tab')
+  • Precise mouse movement : await page.mouse.move(x, y)
+  • Scroll                 : await page.evaluate('window.scrollBy(0, 500)')
+  • Drag and drop          : await page.drag_and_drop('src', 'dst')
+  • Any raw JS             : result = await page.evaluate('() => ...')
+Rules:
+  • Never call page.close(), context.close(), or browser.close() — they are blocked.
+  • Any exception is caught and returned as status "error" — Chrome will not crash.
+  • Prefer specific dom_* tools first; use dom_run only when no dedicated tool exists.
+
+── CLOUDFLARE TURNSTILE ──────────────────────────────────────────────
+When a Cloudflare "Verify you are human" checkbox or Turnstile widget appears:
+  1. Call dom_solve_turnstile() — it performs human-like mouse movements and clicks the checkbox automatically.
+  2. If it returns status "success", continue with the task immediately.
+  3. If it returns status "error" (widget not found or did not clear), call request_human.
+  • Never use interact_with_element, click_first, or act_on_element on a Turnstile widget.
+  • Never call dom_click on the Turnstile iframe directly — dom_solve_turnstile handles it.
+  • Do NOT call request_human before trying dom_solve_turnstile first.
+
 ── HUMAN ESCALATION ──────────────────────────────────────────────────
 Call request_human when:
-  • CAPTCHA, login wall, or blocked UI is encountered.
+  • A CAPTCHA other than Cloudflare Turnstile is encountered (image CAPTCHA, audio CAPTCHA, etc.).
+  • login wall or blocked UI is encountered.
   • A required field needs information you do not have.
   • A toggle or interaction fails after two retries.
   • find_installed_apps returns empty for a required app category.

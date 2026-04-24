@@ -411,6 +411,204 @@ async def dom_switch_browser(name: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
+async def dom_run(code: str) -> Dict[str, Any]:
+    """Execute arbitrary async Playwright Python code against the active browser page.
+
+    Pre-bound variables available in the code:
+      page    — the active Playwright Page
+      context — the active BrowserContext
+      frame   — the active frame (or page if no frame is set)
+
+    The return value of the last expression (if any) is captured and returned
+    in the result field. stdout is also captured and returned.
+
+    Use this for any browser interaction not covered by other dom_* tools:
+      • Mouse move/hover : await page.mouse.move(x, y)
+      • Keyboard         : await page.keyboard.press('Escape')
+      • Scroll           : await page.evaluate('window.scrollBy(0, 500)')
+      • Raw JS           : result = await page.evaluate('() => document.title')
+      • Hover trigger    : await page.hover('selector')
+      • Drag             : await page.drag_and_drop('src', 'dst')
+
+    Destructive calls (page.close, context.close, browser.close) are blocked.
+    Any Python exception is caught and returned as status "error" — Chrome will
+    not crash from a bad code string.
+    """
+    import ast
+    import io
+    import contextlib
+
+    await global_browser.ensure_active_page()
+    page = global_browser.active_page
+    if not page:
+        return {"status": "error", "message": "Browser is not active."}
+
+    # Block calls that would close the browser or page
+    BLOCKED = ("page.close", "context.close", "browser.close", "playwright.stop")
+    for b in BLOCKED:
+        if b in code:
+            return {"status": "error", "message": f"Blocked: '{b}' is not allowed in dom_run."}
+
+    context = global_browser._browser_context
+    frame = global_browser.active_frame_or_page
+
+    # Wrap the code in an async function so `await` works at top level
+    # Indent every line of user code by 4 spaces
+    indented = "\n".join("    " + line for line in code.splitlines())
+    fn_src = f"async def _dom_run_fn(page, context, frame):\n{indented}\n"
+
+    # Validate syntax before exec to give a clean error
+    try:
+        ast.parse(fn_src)
+    except SyntaxError as e:
+        return {"status": "error", "message": f"SyntaxError: {e}"}
+
+    globs: dict = {}
+    try:
+        exec(fn_src, globs)  # noqa: S102
+    except Exception as e:
+        return {"status": "error", "message": f"Compile error: {e}"}
+
+    stdout_buf = io.StringIO()
+    result = None
+    try:
+        with contextlib.redirect_stdout(stdout_buf):
+            result = await globs["_dom_run_fn"](page, context, frame)
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "stdout": stdout_buf.getvalue(),
+        }
+
+    return {
+        "status": "success",
+        "result": result,
+        "stdout": stdout_buf.getvalue(),
+    }
+
+
+async def dom_solve_turnstile() -> Dict[str, Any]:
+    """Solve a Cloudflare Turnstile challenge by performing human-like mouse
+    movements across the page, then clicking the Turnstile checkbox.
+
+    Call this whenever a Turnstile 'Verify you are human' widget appears.
+    The tool:
+      1. Jiggles the mouse across the viewport in randomised bezier curves to
+         build up mouse-movement entropy (Turnstile requires this before the
+         checkbox becomes interactive).
+      2. Locates the Turnstile iframe via common selectors.
+      3. Moves to the checkbox inside the iframe and clicks it.
+      4. Waits up to 8 s for the challenge to clear.
+
+    Returns status "success" when the Turnstile widget disappears or the
+    checkbox is checked, "error" otherwise.
+    """
+    import asyncio
+    import math
+    import random
+
+    await global_browser.ensure_active_page()
+    page = global_browser.active_page
+    if not page:
+        return {"status": "error", "message": "Browser is not active."}
+
+    try:
+        # ── 1. Human-like mouse jiggle across the viewport ──────────────────
+        vw, vh = 1280, 768  # matches _CHROME_FLAGS window size
+
+        def _bezier(p0, p1, p2, p3, t):
+            """Cubic bezier point at parameter t."""
+            mt = 1 - t
+            return (
+                mt**3 * p0[0] + 3*mt**2*t*p1[0] + 3*mt*t**2*p2[0] + t**3*p3[0],
+                mt**3 * p0[1] + 3*mt**2*t*p1[1] + 3*mt*t**2*p2[1] + t**3*p3[1],
+            )
+
+        async def _human_move(x0, y0, x1, y1, steps=None):
+            if steps is None:
+                dist = math.hypot(x1 - x0, y1 - y0)
+                steps = max(10, int(dist / 8))
+            cx1 = random.uniform(min(x0, x1), max(x0, x1))
+            cy1 = random.uniform(min(y0, y1) - 60, max(y0, y1) + 60)
+            cx2 = random.uniform(min(x0, x1), max(x0, x1))
+            cy2 = random.uniform(min(y0, y1) - 60, max(y0, y1) + 60)
+            for i in range(steps + 1):
+                t = i / steps
+                px, py = _bezier((x0, y0), (cx1, cy1), (cx2, cy2), (x1, y1), t)
+                await page.mouse.move(px, py)
+                await asyncio.sleep(random.uniform(0.005, 0.018))
+
+        # Start from center-ish, jiggle around 4–6 random waypoints
+        cur_x, cur_y = vw // 2, vh // 2
+        await page.mouse.move(cur_x, cur_y)
+        for _ in range(random.randint(4, 6)):
+            nx = random.uniform(vw * 0.1, vw * 0.9)
+            ny = random.uniform(vh * 0.1, vh * 0.7)
+            await _human_move(cur_x, cur_y, nx, ny)
+            cur_x, cur_y = nx, ny
+            await asyncio.sleep(random.uniform(0.05, 0.15))
+
+        # ── 2. Find the Turnstile iframe ─────────────────────────────────────
+        IFRAME_SELECTORS = [
+            "iframe[src*='challenges.cloudflare.com']",
+            "iframe[src*='turnstile']",
+            "iframe[title*='Widget']",
+            "iframe[title*='challenge']",
+        ]
+        iframe_el = None
+        for sel in IFRAME_SELECTORS:
+            try:
+                iframe_el = await page.query_selector(sel)
+                if iframe_el:
+                    break
+            except Exception:
+                pass
+
+        if not iframe_el:
+            return {
+                "status": "error",
+                "message": "Turnstile iframe not found — widget may not be present.",
+            }
+
+        # ── 3. Get iframe bounding box and click the checkbox ────────────────
+        bbox = await iframe_el.bounding_box()
+        if not bbox:
+            return {"status": "error", "message": "Turnstile iframe has no bounding box."}
+
+        # The checkbox sits in the left portion of the iframe (~24 px from left, vertically centred)
+        cb_x = bbox["x"] + 24
+        cb_y = bbox["y"] + bbox["height"] / 2
+
+        # Move to checkbox with human curve, then click
+        await _human_move(cur_x, cur_y, cb_x, cb_y)
+        await asyncio.sleep(random.uniform(0.08, 0.2))
+        await page.mouse.click(cb_x, cb_y)
+
+        # ── 4. Wait for Turnstile to clear (widget disappears or gets checked) ─
+        for _ in range(16):
+            await asyncio.sleep(0.5)
+            still_visible = await page.query_selector(IFRAME_SELECTORS[0])
+            if not still_visible:
+                return {"status": "success", "message": "Turnstile solved — widget cleared."}
+            # Check if checkbox inside iframe is now checked
+            try:
+                frame = await iframe_el.content_frame()
+                if frame:
+                    checked = await frame.evaluate(
+                        "() => !!document.querySelector('input[type=\"checkbox\"]')?.checked"
+                    )
+                    if checked:
+                        return {"status": "success", "message": "Turnstile solved — checkbox checked."}
+            except Exception:
+                pass
+
+        return {"status": "error", "message": "Turnstile did not clear within 8 s — may need manual intervention."}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 async def dom_click_text(text: str) -> Dict[str, Any]:
     """Click an element by its text content using the DOM."""
     await global_browser.ensure_active_page()
