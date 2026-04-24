@@ -447,9 +447,14 @@ class Agent:
 
         # Inject cross-verb PID hints so the agent can skip list_active_windows
         # for windows already discovered in a prior verb of the same session.
+        # IMPORTANT: Never inject browser PIDs — dom_* tools own the browser via
+        # Playwright directly and don't need a PID. A stale browser PID causes the
+        # agent to verify it with `ps`, find nothing, and fall back to AT-SPI2 tools.
+        _BROWSER_ROLES = {"browser", "chrome", "chromium", "firefox", "brave", "msedge"}
         pid_hints: list[str] = []
         for role, pid in get_known_pids().items():
-            pid_hints.append(f"{role}_pid={pid}")
+            if role.lower() not in _BROWSER_ROLES:
+                pid_hints.append(f"{role}_pid={pid}")
         pid_line = ", ".join(pid_hints) if pid_hints else ""
 
         parts: list[str] = []
