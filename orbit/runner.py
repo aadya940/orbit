@@ -232,7 +232,8 @@ class Agent:
         # Run state.
         self._final_text = ""
         self._final_output: Any = None
-        self._errors: list[str] = []
+        self._errors: list[str] = []       # critical failures only (timeout, API error, decode failure)
+        self._tool_errors: list[str] = []  # tool-level errors (non-fatal, don't affect status)
         self._saw_request_human = False
 
         # Session reuse strategy:
@@ -381,10 +382,13 @@ class Agent:
         else:
             status = "success"
 
-        if self._output_schema is not None and status == "success":
+        if self._output_schema is not None:
             # ADK-native structured output path:
             # - output_schema validates the model's reply
             # - output_key stores the validated JSON string in session.state
+            # Always attempt deserialization regardless of prior tool errors —
+            # tool errors are non-fatal and the agent may have still produced
+            # valid structured output.
             output_key = self._output_schema_output_key
             try:
                 updated_session = await session_service.get_session(
@@ -433,7 +437,7 @@ class Agent:
             status=status,
             summary=self._final_text,
             output=self._final_output,
-            errors=self._errors,
+            errors=self._errors + self._tool_errors,
             latency=latency_summary,
             journal=self._journal.to_dict(),
         )
@@ -655,7 +659,11 @@ class Agent:
         # Collect errors.
         resp = getattr(part.function_response, "response", None)
         if isinstance(resp, dict) and resp.get("status") == "error":
-            self._errors.append(f"{name}: {resp.get('message', 'unknown error')}")
+            # Tool-level errors are non-fatal — the agent often retries and recovers.
+            # Track separately so they don't corrupt run status.
+            msg = f"{name}: {resp.get('message', 'unknown error')}"
+            self._tool_errors.append(msg)
+            log.debug("Tool error (non-fatal): %s", msg)
 
         # Latency / logging.
         if self._latency:
