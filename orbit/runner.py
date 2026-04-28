@@ -176,6 +176,7 @@ class Agent:
         import pathlib
 
         log_f = None
+        _prev_stdout = sys.stdout  # save caller's stdout (may be a workflow-level tee)
         if self.log_file_path:
             pathlib.Path(self.log_file_path).parent.mkdir(parents=True, exist_ok=True)
             log_f = open(self.log_file_path, "w", encoding="utf-8", buffering=1)
@@ -203,7 +204,7 @@ class Agent:
                         )
         finally:
             if log_f:
-                sys.stdout = sys.__stdout__
+                sys.stdout = _prev_stdout  # restore caller's stdout, not raw __stdout__
                 log_f.close()
 
     async def __aenter__(self):
