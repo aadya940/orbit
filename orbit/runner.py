@@ -513,21 +513,30 @@ class Agent:
             self._final_text = _console_safe(text) if text else ""
             self._ui.agent_done(self._final_text)
 
-    def _validate_schema_json(self, json_text: str) -> Any:
-        """Strict schema validation from a JSON string with light dict coercion."""
+    def _validate_schema_json(self, json_text) -> Any:
+        """Strict schema validation from a JSON string or dict with light dict coercion.
+
+        ADK may store either a JSON string (str) or an already-deserialized dict
+        (via model_dump) in session.state[output_key]. Both are handled here.
+        """
         schema = self._output_schema
         if not schema:
             return json_text
 
-        model_validate_json = getattr(schema, "model_validate_json", None)
-        if callable(model_validate_json):
-            try:
-                return schema.model_validate_json(json_text)
-            except Exception:
-                # Fall through to dict-level coercion path.
-                pass
+        # If ADK already deserialized to a dict (model_dump path), skip JSON parsing.
+        if isinstance(json_text, dict):
+            data = json_text
+        else:
+            # Try fast path: model_validate_json on the raw string.
+            model_validate_json = getattr(schema, "model_validate_json", None)
+            if callable(model_validate_json):
+                try:
+                    return schema.model_validate_json(json_text)
+                except Exception:
+                    # Fall through to dict-level coercion path.
+                    pass
+            data = json.loads(json_text)
 
-        data = json.loads(json_text)
         validate = getattr(schema, "model_validate", None)
         if not callable(validate):
             return data
@@ -586,14 +595,28 @@ class Agent:
         if not text:
             return None
         s = text.strip()
+        # Strip markdown code fence
         if s.startswith("```"):
             m = re.match(r"^```(?:json)?\s*(.*?)\s*```$", s, flags=re.DOTALL)
             if m:
                 s = m.group(1).strip()
+        # Fast path: entire text is JSON
         if (s.startswith("{") and s.endswith("}")) or (
             s.startswith("[") and s.endswith("]")
         ):
             return s
+        # Fallback: find the largest valid JSON object/array within the text.
+        # Handles models that wrap JSON in prose or append trailing commentary.
+        for start_char, end_char in [("{", "}"), ("[", "]")]:
+            start = s.find(start_char)
+            end = s.rfind(end_char)
+            if start != -1 and end > start:
+                candidate = s[start : end + 1]
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    pass
         return None
 
     def _on_function_call(self, event, part) -> None:
