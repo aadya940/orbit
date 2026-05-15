@@ -130,16 +130,20 @@ const ShadowLib = (() => {
 
     // Fire React/Vue/Svelte-compatible input events
     function reactFill(el, value) {
-        const inputProto = window.HTMLInputElement.prototype;
-        const textareaProto = window.HTMLTextAreaElement.prototype;
-        const setter = el.tagName === 'TEXTAREA'
-            ? Object.getOwnPropertyDescriptor(textareaProto, 'value') && textareaProto
-            : Object.getOwnPropertyDescriptor(inputProto, 'value') && inputProto;
-        if (setter) {
-            const desc = Object.getOwnPropertyDescriptor(setter, 'value');
-            if (desc && desc.set) desc.set.call(el, value);
-        } else {
+        const tag = el.tagName;
+        if (tag === 'SELECT') {
+            // Native setter is type-checked to HTMLInputElement; use el.value directly
             el.value = value;
+        } else {
+            const proto = tag === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (desc && desc.set) {
+                desc.set.call(el, value);
+            } else {
+                el.value = value;
+            }
         }
         el.dispatchEvent(new Event('input',  { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
