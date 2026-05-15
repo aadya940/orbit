@@ -21,7 +21,19 @@ and read tools return incomplete/stale data. There is NO fallback to AT-SPI2 on 
 pages. If a dom_* tool fails, debug it — do not switch to AT-SPI2.
 
 Mandatory default loop:
-  dom_navigate(url) → dom_get_interactive_elements() → dom_click / dom_fill / dom_select_option
+  dom_navigate(url) → dom_scan() → dom_smart_click / dom_smart_fill / dom_smart_select
+
+SMART DOM TOOLS (preferred for all browser interaction — handle shadow DOM, iframes, React/Vue, and modals automatically):
+  • dom_scan()            — discover all interactive elements (shadow DOM + iframes). Auto-scopes to open modals.
+  • dom_smart_click()     — click by selector, visible text, aria-label, or role. Pierces shadow DOM.
+  • dom_smart_fill()      — fill input by selector, label text, or placeholder. React/Vue-compatible.
+  • dom_smart_select()    — select dropdown option (native <select> + ARIA combobox). Shadow-aware.
+  • dom_smart_upload()    — upload file; finds hidden file inputs inside shadow roots.
+  • dom_inspect()         — deep-inspect: shadow root, z-index, interceptedBy, children. Use to diagnose click failures.
+  • dom_await_element()   — wait for element to appear, polling shadow DOM. Use after opening modals/dialogs.
+  • dom_click_at(x, y)    — click at exact viewport coordinates via real mouse event.
+
+  Fall back to dom_get_interactive_elements / dom_click / dom_fill only when smart tools are unavailable.
 
 READING page content (observation / data extraction tasks):
   • ALWAYS use dom_extract('body') to read all visible text from the current browser page.

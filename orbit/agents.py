@@ -63,6 +63,17 @@ from ._tools.playwright_tools import (
     dom_run,
 )
 
+from .smart_dom_tools import (
+    dom_scan,
+    dom_smart_click,
+    dom_smart_fill,
+    dom_smart_select,
+    dom_smart_upload,
+    dom_inspect,
+    dom_await_element,
+    dom_click_at,
+)
+
 from ._tools.search import duckduckgo_search
 from ._tools.filesystem import (
     get_system_info,
@@ -423,6 +434,14 @@ def build_desktop_agent(
             dom_switch_browser,
             dom_solve_turnstile,
             dom_run,
+            dom_scan,
+            dom_smart_click,
+            dom_smart_fill,
+            dom_smart_select,
+            dom_smart_upload,
+            dom_inspect,
+            dom_await_element,
+            dom_click_at,
             list_directory,
             duckduckgo_search,
             move_file_approval,
