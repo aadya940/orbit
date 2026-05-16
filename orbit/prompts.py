@@ -20,26 +20,57 @@ windows — Chrome does not implement the writable AT-SPI2 interfaces for web co
 and read tools return incomplete/stale data. There is NO fallback to AT-SPI2 on browser
 pages. If a dom_* tool fails, debug it — do not switch to AT-SPI2.
 
-Mandatory default loop:
-  dom_navigate(url) → dom_screenshot() → dom_scan() → dom_smart_click / dom_smart_fill / dom_smart_select / dom_fill_form
+Mandatory default loop (new perception-aware version):
+  dom_navigate(url) → dom_understand() → act → READ "consequences" → next act
+
+Every action tool (dom_smart_click / dom_smart_fill / dom_smart_select / dom_fill_form)
+now returns a "consequences" block describing what changed on the page:
+  {{ "status": "success",
+     "consequences": {{
+       "changed": ["url", "modals", "fields_filled"],   # what differs vs. before
+       "new_modal": "Confirm submission" or null,        # title if one opened
+       "modal_closed": false,
+       "new_toasts": ["Email required"],                 # any alerts that appeared
+       "fields_filled_delta": +1,
+       "page_now": {{ "url": "...", "modal_count": 1, "primary_action": "Submit" }}
+     }} }}
+ALWAYS read the consequences block before deciding the next action. If new_modal
+appeared, your next call should target IT, not the previous context.
+
+When an action FAILS, the result includes a "diagnosis" block explaining WHY:
+  • reason: "not_found"  → closest_labels lists actual button texts on the page
+  • reason: "invisible"  → element is display:none / opacity:0 / zero-size
+  • reason: "disabled"   → fill required fields first
+  • reason: "off_screen" → scroll handled automatically; retry once
+  • reason: "covered"    → overlay/cookie banner is intercepting; dismiss it first
+Use the diagnosis to fix the next call, not to retry blindly.
 
 NEVER guess selectors or placeholder text. If you do not know the exact selector:
-  1. Call dom_screenshot() to see the page visually.
-  2. Call dom_scan() to get real selectors, labels, and placeholders of every interactive element.
-  3. Use the selector/label/placeholder exactly as returned by dom_scan — no mutations.
-  If you guessed a selector and got an error, do NOT retry the same guess — scan first.
+  1. Call dom_understand() to see page type, fields, and actions semantically.
+  2. If that's not enough, dom_scan() for the full interactive inventory.
+  3. Use the selector/label/placeholder exactly as returned — no mutations.
 
 SMART DOM TOOLS (preferred for all browser interaction — handle shadow DOM, iframes, React/Vue, and modals automatically):
-  • dom_screenshot()      — take a viewport screenshot BEFORE interacting with a new page or modal. See exactly what's on screen so you pick the right tool and args without guessing.
-  • dom_scan()            — discover all interactive elements (shadow DOM + iframes). Auto-scopes to open modals. Returns inViewport flag per element.
-  • dom_smart_click()     — click by selector, visible text, aria-label, or role. Prefers exact text, modal-scoped, and in-viewport elements. Fires real mouse event as backup.
-  • dom_smart_fill()      — fill input by selector, label text, or placeholder. Auto-routes <select> to select logic. Clears field before filling. React/Vue-compatible.
+  PERCEPTION
+  • dom_understand()      — 1-paragraph semantic summary: page_type, modal state, all fields with filled/required flags, available actions ranked by prominence. CALL THIS FIRST on every new page or modal — usually replaces dom_screenshot + dom_scan.
+  • dom_screenshot()      — viewport screenshot (base64 PNG). Only when you need to see visual layout (e.g. captcha, image-based UI).
+  • dom_scan()            — full interactive-element inventory. Use when dom_understand is insufficient.
+  • dom_diagnose(...)     — explain why an element can't be acted on (not_found / invisible / disabled / covered / off_screen). Args mirror dom_smart_click.
+
+  ACTION (every call returns "consequences" — read it)
+  • dom_smart_click()     — click by selector / text / aria_label / role. Scoring: exact text > modal-scoped > in-viewport > smallest area. Real mouse event as backup.
+  • dom_smart_fill()      — fill input by selector / label / placeholder. Auto-routes SELECT to select logic. Clears field first. React/Vue-compatible.
   • dom_smart_select()    — select dropdown option (native <select> + ARIA combobox + keyboard type-ahead fallback). Shadow-aware.
-  • dom_fill_form(fields) — fill multiple fields in one call: dom_fill_form({{"First name": "Alex", "Country": "US"}}). Classifies each field and uses the right strategy automatically. Use this for any multi-field form.
+  • dom_fill_form(fields) — fill many fields in one call: dom_fill_form({{"First name": "Alex", "Country": "US"}}). Use this for any multi-field form.
   • dom_smart_upload()    — upload file; finds hidden file inputs inside shadow roots.
-  • dom_inspect()         — deep-inspect: shadow root, z-index, interceptedBy, inViewport, children. Use to diagnose click/fill failures.
-  • dom_await_element()   — wait for element to appear, polling shadow DOM. Use after opening modals/dialogs.
-  • dom_click_at(x, y)    — click at exact viewport coordinates via real Playwright mouse event.
+  • dom_click_at(x, y)    — click at exact viewport coordinates.
+
+  TRANSACTIONS
+  • dom_act([steps])      — run a sequence of dom actions in ONE tool call. Each step is {{"op": "click|fill|select|upload|wait|goto|sleep", ...args}}. Stops at first error and tells you which step broke. Use this for known multi-step flows: e.g. open modal → fill 3 fields → click Next. Cuts 5 LLM round-trips to 1.
+
+  UTILITY
+  • dom_inspect()         — deep-inspect a single element (shadow root, z-index, interceptedBy, children).
+  • dom_await_element()   — poll until an element appears.
 
   Fall back to dom_get_interactive_elements / dom_click / dom_fill only when smart tools are unavailable.
 
