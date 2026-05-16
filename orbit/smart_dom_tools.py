@@ -993,7 +993,10 @@ async def dom_fill_form(
     results = []
     any_error = False
 
-    for field_label, field_value in fields.items():
+    for raw_label, field_value in fields.items():
+        # LLMs often wrap labels in literal quotes (e.g. '"Email address"').
+        # Strip surrounding quote chars so resolution works.
+        field_label = raw_label.strip().strip('"').strip("'").strip("`").strip()
         # Try fill first (handles input, textarea, contenteditable, and auto-routes SELECT)
         r = await dom_smart_fill(
             value=field_value,

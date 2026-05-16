@@ -98,6 +98,13 @@ _SNAPSHOT_JS = r"""
             for (const el of document.querySelectorAll(s)) {
                 const r = el.getBoundingClientRect();
                 if (r.width === 0 || r.height === 0) continue;
+                // Filter phantom modals: must be visibly rendered (offsetParent set,
+                // not display:none, not opacity:0). Catches hidden "save draft"
+                // dialogs LinkedIn keeps in the DOM but doesn't show.
+                if (el.offsetParent === null) continue;
+                const style = getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') continue;
+                if (parseFloat(style.opacity) < 0.1) continue;
                 const titleEl = el.querySelector('h1,h2,h3,[role="heading"]');
                 out.push((titleEl && titleEl.textContent || '').trim().slice(0, 80));
             }

@@ -104,6 +104,13 @@ MULTIPLE BROWSER SURFACES
 ── WINDOW & PID MANAGEMENT ───────────────────────────────────────────
   • NEVER call list_active_windows if EXTRA_INFO already contains browser_pid or any PID.
     Use the provided PID directly. list_active_windows is only for discovering unknown windows.
+  • NEVER call list_active_windows for a browser/web task. If the task mentions a URL, web page,
+    button click, form field, modal, "Easy Apply", "click the listing", or any browser action —
+    skip straight to dom_understand(). The browser is already running. The phrase
+    "Perform this action on the desktop" in a task DOES NOT mean "discover the desktop" — it
+    just identifies which session to use. It is NOT a signal to call list_active_windows.
+  • Only call list_active_windows when you need to interact with a native desktop app
+    (LibreOffice, file manager, settings dialog) whose PID is genuinely unknown.
   • Otherwise call list_active_windows once. Cache all PIDs immediately. Never repeat unless a new window has opened.
   • To start an app: launch_and_get_pid(app_name) — one call gives you start + PID.
   • For a new tab in the same browser: press_hotkey('ctrl+t') → dom_navigate. Do NOT open a new window.
