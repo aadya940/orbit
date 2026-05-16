@@ -21,12 +21,90 @@ Tools:
 
 import asyncio
 import base64
+import functools
 import logging
 from typing import Any, Dict, List, Optional
 
 from orbit._tools.browser import global_browser
+from orbit._tools import perception
 
 log = logging.getLogger("orbit.smart_dom_tools")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OBSERVATION WRAPPER
+# Every action tool runs through _observe(): snapshot before → act → snapshot
+# after → diff. On failure, auto-diagnose. The agent receives consequences,
+# not just success/fail.
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _observe(action_name: str, criteria: Dict[str, Any], inner_coro):
+    """Wrap an action with snapshot/diff/diagnose.
+
+    inner_coro: an awaitable that performs the action and returns the
+                tool's normal result dict (with status/message/etc.)
+    Returns the inner result merged with a "consequences" block.
+    """
+    page, frame = await _page_and_frame()
+    if not page or not frame:
+        # Browser not ready — pass through inner without observation
+        return await inner_coro
+
+    before = await perception.snapshot(frame)
+    try:
+        inner_result = await inner_coro
+    except Exception as e:
+        inner_result = {"status": "error", "message": str(e)}
+
+    # Snapshot after (may need a brief settle)
+    await asyncio.sleep(0.15)
+    after = await perception.snapshot(frame)
+    diff_obj = perception.diff(before, after)
+
+    state = perception.get_state("main")
+    state.snapshot = after
+    state.record({
+        "action": action_name,
+        "criteria": criteria,
+        "status": inner_result.get("status"),
+        "changed": diff_obj["changed"],
+    })
+
+    # Attach consequences. Keep the original keys intact.
+    inner_result["consequences"] = {
+        "changed": diff_obj["changed"],
+        "url_changed": diff_obj["url_changed"],
+        "new_modal": diff_obj["new_modal"],
+        "modal_closed": diff_obj["modal_closed"],
+        "new_toasts": diff_obj["new_toasts"],
+        "fields_filled_delta": diff_obj["fields_filled_delta"],
+        "page_now": {
+            "url": after.url,
+            "title": after.title,
+            "modal_count": after.modal_count,
+            "primary_action": after.primary_action,
+        },
+    }
+
+    # If action failed AND nothing changed on the page AND we have something
+    # to diagnose, run diagnosis. Skip when criteria is empty (e.g. dom_fill_form
+    # where each field has its own per-field status) — diagnosis would just say
+    # "not_found" with no info.
+    if (
+        inner_result.get("status") == "error"
+        and not diff_obj["changed"]
+        and any(criteria.values())
+    ):
+        try:
+            inner_result["diagnosis"] = await perception.diagnose(frame, criteria)
+        except Exception as e:
+            inner_result["diagnosis"] = {"reason": "diagnose_failed", "message": str(e)}
+
+    # Surface NEW error toasts as a top-level warning even when action "succeeded"
+    if diff_obj["new_toasts"]:
+        inner_result["warning"] = "New toast/alert appeared: " + " | ".join(diff_obj["new_toasts"][:3])
+
+    return inner_result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -642,6 +720,42 @@ async def dom_smart_fill(
 
         if (!el) return { found: false };
 
+        // If the resolved field is a SELECT but the value doesn't match any
+        // of its options, prefer a non-SELECT input that ALSO matches the
+        // label (covers LinkedIn-style "Phone country code" SELECT next to
+        // a "Mobile phone number" INPUT — agent says label="Phone" and
+        // would otherwise hit the country dropdown).
+        if (el.tagName === 'SELECT' && label) {
+            const needle = value.toLowerCase();
+            const opts = [...el.options];
+            const optMatch = opts.find(function(o) {
+                return (o.text || '').toLowerCase().includes(needle) ||
+                       (o.value || '').toLowerCase().includes(needle);
+            });
+            if (!optMatch) {
+                // Walk all label-matched inputs; pick the first non-SELECT.
+                const needleL = label.toLowerCase();
+                const allInputs = ShadowLib.queryAll('input,textarea,select');
+                for (const cand of allInputs) {
+                    if (cand.tagName === 'SELECT') continue;
+                    const al = (cand.getAttribute('aria-label') || '').toLowerCase();
+                    const ph = (cand.placeholder || '').toLowerCase();
+                    if (al.includes(needleL) || ph.includes(needleL)) {
+                        el = cand;
+                        break;
+                    }
+                    // Check via for-id relationship
+                    if (cand.id) {
+                        const lbl = document.querySelector('label[for="' + CSS.escape(cand.id) + '"]');
+                        if (lbl && (lbl.textContent || '').toLowerCase().includes(needleL)) {
+                            el = cand;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         el.scrollIntoView({ block: 'center', behavior: 'instant' });
         el.focus();
 
@@ -660,11 +774,17 @@ async def dom_smart_fill(
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 el.dispatchEvent(new Event('input',  { bubbles: true }));
                 return { found: true, routed: 'select', filled: ShadowLib.describe(el), selected: opt.text };
-            } else {
-                const available = options.map(function(o) { return o.text; });
-                return { found: true, routed: 'select', selectError: true,
-                         message: 'Option not found', available };
             }
+            // Option not found. If select already has a non-empty value, treat
+            // as pre-filled noop (covers LinkedIn's email-locked-to-account).
+            if (el.value && el.value !== '' && el.value !== 'Select an option') {
+                return { found: true, routed: 'select', preFilled: true,
+                         filled: ShadowLib.describe(el),
+                         note: 'Field is a locked SELECT pre-filled with "' + el.value + '". Value not in options — accepted existing value.' };
+            }
+            const available = options.map(function(o) { return o.text; });
+            return { found: true, routed: 'select', selectError: true,
+                     message: 'Option not found', available };
         }
 
         if (el.getAttribute('contenteditable') === 'true') {
@@ -721,7 +841,9 @@ async def dom_smart_fill(
             }
 
         out = {"status": "success", "filled": result["filled"]}
-        if result.get("routed") == "select":
+        if result.get("preFilled"):
+            out["note"] = result.get("note") or "Select was pre-filled; new value not in options — accepted existing."
+        elif result.get("routed") == "select":
             out["note"] = f"Field was a <select>; selected '{result.get('selected')}' automatically."
         if result.get("verified") is False:
             out["warning"] = "Value may not have been accepted by the framework. Try dom_smart_fill again or use dom_click_at on the field first."
@@ -922,7 +1044,10 @@ async def dom_fill_form(
     results = []
     any_error = False
 
-    for field_label, field_value in fields.items():
+    for raw_label, field_value in fields.items():
+        # LLMs often wrap labels in literal quotes (e.g. '"Email address"').
+        # Strip surrounding quote chars so resolution works.
+        field_label = raw_label.strip().strip('"').strip("'").strip("`").strip()
         # Try fill first (handles input, textarea, contenteditable, and auto-routes SELECT)
         r = await dom_smart_fill(
             value=field_value,
@@ -1289,3 +1414,178 @@ async def dom_click_at(x: int, y: int) -> Dict[str, Any]:
         return {"status": "success", "clicked_at": {"x": x, "y": y}}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW TOOLS — perception-layer additions
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def dom_understand() -> Dict[str, Any]:
+    """Return a semantic, high-level summary of the current page.
+
+    Instead of a raw element list (dom_scan), this returns:
+      • page_type    — login / signup / form / article / modal_open / list / unknown
+      • modal_open   — whether a modal/dialog is currently shown + its title
+      • fields       — each form field with its label, type, required flag,
+                       filled state, and current value (passwords masked)
+      • actions      — visible buttons ordered by likely importance (lower = more
+                       prominent), each with disabled flag
+      • summary      — a 1-paragraph natural-language description
+
+    Use this when you arrive at a new page or modal — much cheaper than
+    dom_scan + dom_screenshot for understanding "what is this and what
+    should I do next?".
+
+    Example:
+      u = dom_understand()
+      # u['summary'] → "Modal open: Confirm submission. Fields: 0/0 filled.
+      #                 Available actions: Submit, Cancel."
+    """
+    page, frame = await _page_and_frame()
+    if not page:
+        return {"status": "error", "message": "Browser is not active."}
+    u = await perception.understand(frame)
+    if "error" in u:
+        return {"status": "error", "message": u["error"]}
+    u["summary"] = perception.summarize_understanding(u)
+    u["status"] = "success"
+    return u
+
+
+async def dom_diagnose(
+    selector: Optional[str] = None,
+    text: Optional[str] = None,
+    aria_label: Optional[str] = None,
+    role: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Explain why an element matching the given criteria can't be acted on.
+
+    Returns a structured reason:
+      • not_found  — no element matches; includes closest_labels suggestion
+      • invisible  — element exists but display:none / opacity:0 / zero-size
+      • disabled   — element is disabled or aria-disabled
+      • off_screen — rendered but outside viewport
+      • covered    — covered by another element (likely overlay / cookie banner);
+                     includes covered_by description
+      • unknown    — element appears clickable, action had no effect
+
+    Use after an action failed unexpectedly, or proactively before clicking
+    something you're unsure about.
+
+    Args mirror dom_smart_click (selector / text / aria_label / role).
+    """
+    page, frame = await _page_and_frame()
+    if not page:
+        return {"status": "error", "message": "Browser is not active."}
+    result = await perception.diagnose(frame, {
+        "selector": selector, "text": text,
+        "aria_label": aria_label, "role": role,
+    })
+    result["status"] = "success"
+    return result
+
+
+async def dom_act(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Execute a sequence of dom_* actions in a single tool call.
+
+    Each step is a dict with an 'op' key naming the action plus the action's
+    keyword args. Stops at the first error and returns where it broke,
+    along with the consequences observed at each step.
+
+    Supported ops:
+      click     : keys mirror dom_smart_click   (selector/text/aria_label/role/exact)
+      fill      : keys mirror dom_smart_fill    (value, selector/label/placeholder)
+      fill_form : keys mirror dom_fill_form     ({"fields": {...}})
+      select    : keys mirror dom_smart_select  (selector/label, option)
+      upload    : keys mirror dom_smart_upload  (selector?, file_path)
+      wait      : keys mirror dom_await_element (selector or text, timeout_ms)
+      goto      : {"url": "..."} — calls dom_navigate
+      sleep     : {"ms": 500}
+
+    Example:
+      dom_act([
+        {"op": "click", "text": "Apply"},
+        {"op": "wait",  "selector": '[role="dialog"]'},
+        {"op": "fill",  "label": "First name", "value": "Alex"},
+        {"op": "fill",  "label": "Phone",      "value": "4155551212"},
+        {"op": "click", "text": "Next"},
+      ])
+
+    A 5-step flow becomes 1 LLM round-trip. Each step's consequences are
+    returned so you can see exactly where the chain broke if it fails.
+    """
+    # Late-imported to avoid circulars at module-load
+    from orbit._tools.playwright_tools import dom_navigate
+
+    results: List[Dict[str, Any]] = []
+    for i, step in enumerate(steps):
+        op = step.get("op")
+        args = {k: v for k, v in step.items() if k != "op"}
+        try:
+            if op == "click":
+                # Be lenient: agent often passes 'label' meaning visible text
+                if "label" in args and "text" not in args:
+                    args["text"] = args.pop("label")
+                res = await dom_smart_click(**args)
+            elif op == "fill":
+                res = await dom_smart_fill(**args)
+            elif op in ("fill_form", "fillform"):
+                # Accept either {fields: {...}} OR top-level field map
+                fields = args.get("fields") or args.get("params", {}).get("fields") or {
+                    k: v for k, v in args.items() if k != "frame_url"
+                }
+                res = await dom_fill_form(
+                    fields=fields,
+                    frame_url=args.get("frame_url"),
+                )
+            elif op == "select":
+                res = await dom_smart_select(**args)
+            elif op == "upload":
+                res = await dom_smart_upload(**args)
+            elif op == "wait":
+                res = await dom_await_element(**args)
+            elif op == "goto":
+                res = await dom_navigate(**args)
+            elif op == "sleep":
+                ms = args.get("ms") or args.get("timeout_ms") or args.get("duration_ms") or 200
+                await asyncio.sleep(ms / 1000.0)
+                res = {"status": "success", "slept_ms": ms}
+            else:
+                res = {"status": "error", "message": f"Unknown op: {op!r}"}
+        except Exception as e:
+            res = {"status": "error", "message": f"{type(e).__name__}: {e}"}
+
+        results.append({"step": i, "op": op, **res})
+        if res.get("status") == "error":
+            return {
+                "status": "error",
+                "failed_at_step": i,
+                "message": f"Step {i} ({op}) failed: {res.get('message')}",
+                "results": results,
+            }
+
+    return {"status": "success", "steps_completed": len(steps), "results": results}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WIRE OBSERVATION INTO THE 4 PRIMARY ACTION TOOLS
+# Re-binds dom_smart_click / dom_smart_fill / dom_smart_select / dom_fill_form
+# at module-load to wrap each with snapshot / diff / diagnose.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_OBSERVED_KEYS = ("selector", "text", "aria_label", "role", "label", "placeholder")
+
+def _wrap_with_observation(name: str, action_label: str) -> None:
+    inner_fn = globals()[name]
+
+    @functools.wraps(inner_fn)   # preserves signature so ADK schema sees the real params
+    async def wrapped(*args, **kwargs):
+        criteria = {k: v for k, v in kwargs.items() if k in _OBSERVED_KEYS}
+        return await _observe(action_label, criteria, inner_fn(*args, **kwargs))
+
+    globals()[name] = wrapped
+
+_wrap_with_observation("dom_smart_click", "click")
+_wrap_with_observation("dom_smart_fill", "fill")
+_wrap_with_observation("dom_smart_select", "select")
+_wrap_with_observation("dom_fill_form", "fill_form")

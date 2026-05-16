@@ -74,6 +74,9 @@ from .smart_dom_tools import (
     dom_inspect,
     dom_await_element,
     dom_click_at,
+    dom_understand,
+    dom_diagnose,
+    dom_act,
 )
 
 from ._tools.search import duckduckgo_search
@@ -446,6 +449,9 @@ def build_desktop_agent(
             dom_inspect,
             dom_await_element,
             dom_click_at,
+            dom_understand,
+            dom_diagnose,
+            dom_act,
             list_directory,
             duckduckgo_search,
             move_file_approval,
