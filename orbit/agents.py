@@ -64,10 +64,12 @@ from ._tools.playwright_tools import (
 )
 
 from .smart_dom_tools import (
+    dom_screenshot,
     dom_scan,
     dom_smart_click,
     dom_smart_fill,
     dom_smart_select,
+    dom_fill_form,
     dom_smart_upload,
     dom_inspect,
     dom_await_element,
@@ -434,10 +436,12 @@ def build_desktop_agent(
             dom_switch_browser,
             dom_solve_turnstile,
             dom_run,
+            dom_screenshot,
             dom_scan,
             dom_smart_click,
             dom_smart_fill,
             dom_smart_select,
+            dom_fill_form,
             dom_smart_upload,
             dom_inspect,
             dom_await_element,

@@ -21,17 +21,19 @@ and read tools return incomplete/stale data. There is NO fallback to AT-SPI2 on 
 pages. If a dom_* tool fails, debug it — do not switch to AT-SPI2.
 
 Mandatory default loop:
-  dom_navigate(url) → dom_scan() → dom_smart_click / dom_smart_fill / dom_smart_select
+  dom_navigate(url) → dom_screenshot() → dom_scan() → dom_smart_click / dom_smart_fill / dom_smart_select / dom_fill_form
 
 SMART DOM TOOLS (preferred for all browser interaction — handle shadow DOM, iframes, React/Vue, and modals automatically):
-  • dom_scan()            — discover all interactive elements (shadow DOM + iframes). Auto-scopes to open modals.
-  • dom_smart_click()     — click by selector, visible text, aria-label, or role. Pierces shadow DOM.
-  • dom_smart_fill()      — fill input by selector, label text, or placeholder. React/Vue-compatible.
-  • dom_smart_select()    — select dropdown option (native <select> + ARIA combobox). Shadow-aware.
+  • dom_screenshot()      — take a viewport screenshot BEFORE interacting with a new page or modal. See exactly what's on screen so you pick the right tool and args without guessing.
+  • dom_scan()            — discover all interactive elements (shadow DOM + iframes). Auto-scopes to open modals. Returns inViewport flag per element.
+  • dom_smart_click()     — click by selector, visible text, aria-label, or role. Prefers exact text, modal-scoped, and in-viewport elements. Fires real mouse event as backup.
+  • dom_smart_fill()      — fill input by selector, label text, or placeholder. Auto-routes <select> to select logic. Clears field before filling. React/Vue-compatible.
+  • dom_smart_select()    — select dropdown option (native <select> + ARIA combobox + keyboard type-ahead fallback). Shadow-aware.
+  • dom_fill_form(fields) — fill multiple fields in one call: dom_fill_form({"First name": "Alex", "Country": "US"}). Classifies each field and uses the right strategy automatically. Use this for any multi-field form.
   • dom_smart_upload()    — upload file; finds hidden file inputs inside shadow roots.
-  • dom_inspect()         — deep-inspect: shadow root, z-index, interceptedBy, children. Use to diagnose click failures.
+  • dom_inspect()         — deep-inspect: shadow root, z-index, interceptedBy, inViewport, children. Use to diagnose click/fill failures.
   • dom_await_element()   — wait for element to appear, polling shadow DOM. Use after opening modals/dialogs.
-  • dom_click_at(x, y)    — click at exact viewport coordinates via real mouse event.
+  • dom_click_at(x, y)    — click at exact viewport coordinates via real Playwright mouse event.
 
   Fall back to dom_get_interactive_elements / dom_click / dom_fill only when smart tools are unavailable.
 
