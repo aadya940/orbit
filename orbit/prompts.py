@@ -29,7 +29,7 @@ SMART DOM TOOLS (preferred for all browser interaction — handle shadow DOM, if
   • dom_smart_click()     — click by selector, visible text, aria-label, or role. Prefers exact text, modal-scoped, and in-viewport elements. Fires real mouse event as backup.
   • dom_smart_fill()      — fill input by selector, label text, or placeholder. Auto-routes <select> to select logic. Clears field before filling. React/Vue-compatible.
   • dom_smart_select()    — select dropdown option (native <select> + ARIA combobox + keyboard type-ahead fallback). Shadow-aware.
-  • dom_fill_form(fields) — fill multiple fields in one call: dom_fill_form({"First name": "Alex", "Country": "US"}). Classifies each field and uses the right strategy automatically. Use this for any multi-field form.
+  • dom_fill_form(fields) — fill multiple fields in one call: dom_fill_form({{"First name": "Alex", "Country": "US"}}). Classifies each field and uses the right strategy automatically. Use this for any multi-field form.
   • dom_smart_upload()    — upload file; finds hidden file inputs inside shadow roots.
   • dom_inspect()         — deep-inspect: shadow root, z-index, interceptedBy, inViewport, children. Use to diagnose click/fill failures.
   • dom_await_element()   — wait for element to appear, polling shadow DOM. Use after opening modals/dialogs.
