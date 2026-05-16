@@ -21,6 +21,7 @@ Tools:
 
 import asyncio
 import base64
+import functools
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -1467,6 +1468,9 @@ async def dom_act(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         args = {k: v for k, v in step.items() if k != "op"}
         try:
             if op == "click":
+                # Be lenient: agent often passes 'label' meaning visible text
+                if "label" in args and "text" not in args:
+                    args["text"] = args.pop("label")
                 res = await dom_smart_click(**args)
             elif op == "fill":
                 res = await dom_smart_fill(**args)
@@ -1479,8 +1483,9 @@ async def dom_act(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
             elif op == "goto":
                 res = await dom_navigate(**args)
             elif op == "sleep":
-                await asyncio.sleep(args.get("ms", 200) / 1000.0)
-                res = {"status": "success", "slept_ms": args.get("ms", 200)}
+                ms = args.get("ms") or args.get("timeout_ms") or args.get("duration_ms") or 200
+                await asyncio.sleep(ms / 1000.0)
+                res = {"status": "success", "slept_ms": ms}
             else:
                 res = {"status": "error", "message": f"Unknown op: {op!r}"}
         except Exception as e:
@@ -1509,13 +1514,11 @@ _OBSERVED_KEYS = ("selector", "text", "aria_label", "role", "label", "placeholde
 def _wrap_with_observation(name: str, action_label: str) -> None:
     inner_fn = globals()[name]
 
+    @functools.wraps(inner_fn)   # preserves signature so ADK schema sees the real params
     async def wrapped(*args, **kwargs):
         criteria = {k: v for k, v in kwargs.items() if k in _OBSERVED_KEYS}
         return await _observe(action_label, criteria, inner_fn(*args, **kwargs))
 
-    wrapped.__name__ = name
-    wrapped.__qualname__ = name
-    wrapped.__doc__ = inner_fn.__doc__
     globals()[name] = wrapped
 
 _wrap_with_observation("dom_smart_click", "click")
