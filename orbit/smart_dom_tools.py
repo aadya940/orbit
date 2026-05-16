@@ -86,8 +86,15 @@ async def _observe(action_name: str, criteria: Dict[str, Any], inner_coro):
         },
     }
 
-    # If action failed AND nothing changed on the page, run diagnosis
-    if inner_result.get("status") == "error" and not diff_obj["changed"]:
+    # If action failed AND nothing changed on the page AND we have something
+    # to diagnose, run diagnosis. Skip when criteria is empty (e.g. dom_fill_form
+    # where each field has its own per-field status) — diagnosis would just say
+    # "not_found" with no info.
+    if (
+        inner_result.get("status") == "error"
+        and not diff_obj["changed"]
+        and any(criteria.values())
+    ):
         try:
             inner_result["diagnosis"] = await perception.diagnose(frame, criteria)
         except Exception as e:
@@ -713,6 +720,42 @@ async def dom_smart_fill(
 
         if (!el) return { found: false };
 
+        // If the resolved field is a SELECT but the value doesn't match any
+        // of its options, prefer a non-SELECT input that ALSO matches the
+        // label (covers LinkedIn-style "Phone country code" SELECT next to
+        // a "Mobile phone number" INPUT — agent says label="Phone" and
+        // would otherwise hit the country dropdown).
+        if (el.tagName === 'SELECT' && label) {
+            const needle = value.toLowerCase();
+            const opts = [...el.options];
+            const optMatch = opts.find(function(o) {
+                return (o.text || '').toLowerCase().includes(needle) ||
+                       (o.value || '').toLowerCase().includes(needle);
+            });
+            if (!optMatch) {
+                // Walk all label-matched inputs; pick the first non-SELECT.
+                const needleL = label.toLowerCase();
+                const allInputs = ShadowLib.queryAll('input,textarea,select');
+                for (const cand of allInputs) {
+                    if (cand.tagName === 'SELECT') continue;
+                    const al = (cand.getAttribute('aria-label') || '').toLowerCase();
+                    const ph = (cand.placeholder || '').toLowerCase();
+                    if (al.includes(needleL) || ph.includes(needleL)) {
+                        el = cand;
+                        break;
+                    }
+                    // Check via for-id relationship
+                    if (cand.id) {
+                        const lbl = document.querySelector('label[for="' + CSS.escape(cand.id) + '"]');
+                        if (lbl && (lbl.textContent || '').toLowerCase().includes(needleL)) {
+                            el = cand;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         el.scrollIntoView({ block: 'center', behavior: 'instant' });
         el.focus();
 
@@ -731,11 +774,17 @@ async def dom_smart_fill(
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 el.dispatchEvent(new Event('input',  { bubbles: true }));
                 return { found: true, routed: 'select', filled: ShadowLib.describe(el), selected: opt.text };
-            } else {
-                const available = options.map(function(o) { return o.text; });
-                return { found: true, routed: 'select', selectError: true,
-                         message: 'Option not found', available };
             }
+            // Option not found. If select already has a non-empty value, treat
+            // as pre-filled noop (covers LinkedIn's email-locked-to-account).
+            if (el.value && el.value !== '' && el.value !== 'Select an option') {
+                return { found: true, routed: 'select', preFilled: true,
+                         filled: ShadowLib.describe(el),
+                         note: 'Field is a locked SELECT pre-filled with "' + el.value + '". Value not in options — accepted existing value.' };
+            }
+            const available = options.map(function(o) { return o.text; });
+            return { found: true, routed: 'select', selectError: true,
+                     message: 'Option not found', available };
         }
 
         if (el.getAttribute('contenteditable') === 'true') {
@@ -792,7 +841,9 @@ async def dom_smart_fill(
             }
 
         out = {"status": "success", "filled": result["filled"]}
-        if result.get("routed") == "select":
+        if result.get("preFilled"):
+            out["note"] = result.get("note") or "Select was pre-filled; new value not in options — accepted existing."
+        elif result.get("routed") == "select":
             out["note"] = f"Field was a <select>; selected '{result.get('selected')}' automatically."
         if result.get("verified") is False:
             out["warning"] = "Value may not have been accepted by the framework. Try dom_smart_fill again or use dom_click_at on the field first."
@@ -1442,13 +1493,14 @@ async def dom_act(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
     along with the consequences observed at each step.
 
     Supported ops:
-      click   : keys mirror dom_smart_click   (selector/text/aria_label/role/exact)
-      fill    : keys mirror dom_smart_fill    (value, selector/label/placeholder)
-      select  : keys mirror dom_smart_select  (selector/label, option)
-      upload  : keys mirror dom_smart_upload  (selector?, file_path)
-      wait    : keys mirror dom_await_element (selector or text, timeout_ms)
-      goto    : {"url": "..."} — calls dom_navigate
-      sleep   : {"ms": 500}
+      click     : keys mirror dom_smart_click   (selector/text/aria_label/role/exact)
+      fill      : keys mirror dom_smart_fill    (value, selector/label/placeholder)
+      fill_form : keys mirror dom_fill_form     ({"fields": {...}})
+      select    : keys mirror dom_smart_select  (selector/label, option)
+      upload    : keys mirror dom_smart_upload  (selector?, file_path)
+      wait      : keys mirror dom_await_element (selector or text, timeout_ms)
+      goto      : {"url": "..."} — calls dom_navigate
+      sleep     : {"ms": 500}
 
     Example:
       dom_act([
@@ -1477,6 +1529,15 @@ async def dom_act(steps: List[Dict[str, Any]]) -> Dict[str, Any]:
                 res = await dom_smart_click(**args)
             elif op == "fill":
                 res = await dom_smart_fill(**args)
+            elif op in ("fill_form", "fillform"):
+                # Accept either {fields: {...}} OR top-level field map
+                fields = args.get("fields") or args.get("params", {}).get("fields") or {
+                    k: v for k, v in args.items() if k != "frame_url"
+                }
+                res = await dom_fill_form(
+                    fields=fields,
+                    frame_url=args.get("frame_url"),
+                )
             elif op == "select":
                 res = await dom_smart_select(**args)
             elif op == "upload":

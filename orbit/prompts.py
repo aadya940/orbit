@@ -232,6 +232,12 @@ Use it for browser interactions not covered by other dom_* tools:
   • Drag and drop          : await page.drag_and_drop('src', 'dst')
   • Any raw JS             : result = await page.evaluate('() => document.title')
 
+IFRAME WARNING: page.query_selector* does NOT pierce iframes. LinkedIn's job
+list, payment widgets, and many embedded UIs render inside sub-frames — a raw
+page query will return 0 elements while the agent can clearly see content.
+If that happens, switch to dom_smart_click / dom_smart_fill (they pierce
+all frames automatically), or iterate `for f in page.frames` inside dom_run.
+
 WARNING — code is PYTHON, not JavaScript:
   WRONG  : const els = await page.$all('a')            # JS syntax, will SyntaxError
   CORRECT: els = await page.query_selector_all('a')    # Python
