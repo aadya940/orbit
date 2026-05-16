@@ -23,6 +23,12 @@ pages. If a dom_* tool fails, debug it — do not switch to AT-SPI2.
 Mandatory default loop:
   dom_navigate(url) → dom_screenshot() → dom_scan() → dom_smart_click / dom_smart_fill / dom_smart_select / dom_fill_form
 
+NEVER guess selectors or placeholder text. If you do not know the exact selector:
+  1. Call dom_screenshot() to see the page visually.
+  2. Call dom_scan() to get real selectors, labels, and placeholders of every interactive element.
+  3. Use the selector/label/placeholder exactly as returned by dom_scan — no mutations.
+  If you guessed a selector and got an error, do NOT retry the same guess — scan first.
+
 SMART DOM TOOLS (preferred for all browser interaction — handle shadow DOM, iframes, React/Vue, and modals automatically):
   • dom_screenshot()      — take a viewport screenshot BEFORE interacting with a new page or modal. See exactly what's on screen so you pick the right tool and args without guessing.
   • dom_scan()            — discover all interactive elements (shadow DOM + iframes). Auto-scopes to open modals. Returns inViewport flag per element.
@@ -186,7 +192,16 @@ Use it for browser interactions not covered by other dom_* tools:
   • Precise mouse movement : await page.mouse.move(x, y)
   • Scroll                 : await page.evaluate('window.scrollBy(0, 500)')
   • Drag and drop          : await page.drag_and_drop('src', 'dst')
-  • Any raw JS             : result = await page.evaluate('() => ...')
+  • Any raw JS             : result = await page.evaluate('() => document.title')
+
+WARNING — code is PYTHON, not JavaScript:
+  WRONG  : const els = await page.$all('a')            # JS syntax, will SyntaxError
+  CORRECT: els = await page.query_selector_all('a')    # Python
+  WRONG  : let x = await page.evaluate('document.title')
+  CORRECT: x = await page.evaluate('() => document.title')
+  Use `=` for assignment (no const/let/var). Use page.query_selector/query_selector_all/locator.
+  Strings passed inside page.evaluate('...') ARE JavaScript — that is intentional.
+
 Rules:
   • Never call page.close(), context.close(), or browser.close() — they are blocked.
   • Any exception is caught and returned as status "error" — Chrome will not crash.
