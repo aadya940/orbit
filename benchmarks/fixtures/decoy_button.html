@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><title>Decoy</title>
+<style>.muted{opacity:.5}</style></head>
+<body>
+  <h1>Document editor</h1>
+  <!-- Decoy: same accessible name, disabled. Clicking it "succeeds" at
+       the API level but produces no state change — effect verification
+       must catch this and escalate to the real button below. -->
+  <button class="muted" disabled>Save</button>
+  <textarea>draft text</textarea>
+  <button id="real-save">Save</button>
+  <p id="saved" style="display:none">Saved ✓</p>
+  <script>
+    document.getElementById('real-save').onclick = () =>
+      document.getElementById('saved').style.display = 'block';
+  </script>
+</body>
+</html>

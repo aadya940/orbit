@@ -1,0 +1,645 @@
+"""AccessibilityDriver — OS accessibility tree via the OculOS daemon.
+
+Transplanted from orbit v1:
+- OculOSClient: thin REST wrapper (orbit/_oculus_client/client.py)
+- OculOSDaemon: subprocess lifecycle + health-check retry loop
+  (orbit/daemon.py), including the Linux toolkit-accessibility fix that
+  makes Chrome expose its full AT-SPI tree
+- element interaction with stale-element re-find retry, browser-chrome
+  filtering, and multiline typing via keyboard (orbit/_tools/ui.py)
+- app launch with per-app accessibility flags (ui.py manage_window)
+
+No TTL cache: observe() always fetches fresh (the old 0.75s cache was
+deliberately dropped; event-driven invalidation is future work).
+
+All heavy imports (requests, pyautogui) are lazy.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import atexit
+import logging
+import os
+import platform
+import subprocess
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from ..types import (
+    Action,
+    ActionKind,
+    Bounds,
+    Element,
+    Observation,
+    Source,
+    SurfaceUnreadable,
+    TargetNotFound,
+    TargetObstructed,
+)
+from .matching import best_match, rank_matches, suggestions
+
+log = logging.getLogger("orbit2.drivers.accessibility")
+
+_DEFAULT_BASE_URL = "http://127.0.0.1:7878"
+
+
+def _default_binary_path() -> Path:
+    """Default to the oculos binary bundled with the v1 orbit package."""
+    repo_root = Path(__file__).resolve().parents[2]
+    name = "oculos.exe" if os.name == "nt" else "oculos"
+    return repo_root / "orbit" / "_bin" / name
+
+
+class OculOSError(Exception):
+    """Raised when the OculOS API returns an error."""
+
+
+class OculOSClient:
+    """Thin wrapper around the OculOS REST API (localhost daemon)."""
+
+    def __init__(self, base_url: str = _DEFAULT_BASE_URL, timeout: float = 30.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self._timeout = timeout
+        self._session: Any = None
+
+    def _get_session(self) -> Any:
+        if self._session is None:
+            import requests  # lazy
+
+            self._session = requests.Session()
+        return self._session
+
+    # -- discovery --
+
+    def list_windows(self) -> List[dict]:
+        return self._get("/windows")
+
+    def get_tree(self, pid: int) -> dict:
+        return self._get(f"/windows/{pid}/tree")
+
+    def find_elements(
+        self,
+        pid: int,
+        *,
+        query: Optional[str] = None,
+        element_type: Optional[str] = None,
+        interactive: Optional[bool] = None,
+    ) -> List[dict]:
+        params: Dict[str, Any] = {}
+        if query is not None:
+            params["q"] = query
+        if element_type is not None:
+            params["type"] = element_type
+        if interactive is not None:
+            params["interactive"] = str(interactive).lower()
+        return self._get(f"/windows/{pid}/find", params=params)
+
+    # -- window ops --
+
+    def focus_window(self, pid: int) -> None:
+        self._post(f"/windows/{pid}/focus")
+
+    def close_window(self, pid: int) -> None:
+        self._post(f"/windows/{pid}/close")
+
+    # -- element interactions --
+
+    def click(self, element_id: str) -> dict:
+        return self._post(f"/interact/{element_id}/click")
+
+    def set_text(self, element_id: str, text: str) -> dict:
+        return self._post(f"/interact/{element_id}/set-text", json={"text": text})
+
+    def send_keys(self, element_id: str, keys: str) -> dict:
+        return self._post(f"/interact/{element_id}/send-keys", json={"keys": keys})
+
+    def focus(self, element_id: str) -> dict:
+        return self._post(f"/interact/{element_id}/focus")
+
+    def toggle(self, element_id: str) -> dict:
+        return self._post(f"/interact/{element_id}/toggle")
+
+    def expand(self, element_id: str) -> dict:
+        return self._post(f"/interact/{element_id}/expand")
+
+    def select(self, element_id: str) -> dict:
+        return self._post(f"/interact/{element_id}/select")
+
+    def scroll(self, element_id: str, direction: str) -> dict:
+        return self._post(f"/interact/{element_id}/scroll", json={"direction": direction})
+
+    def scroll_into_view(self, element_id: str) -> dict:
+        return self._post(f"/interact/{element_id}/scroll-into-view")
+
+    def health(self) -> dict:
+        return self._get("/health")
+
+    # -- internals --
+
+    def _unwrap(self, r: Any) -> Any:
+        try:
+            body = r.json()
+        except ValueError:
+            r.raise_for_status()
+            raise OculOSError(f"HTTP {r.status_code}: non-JSON response")
+        if not body.get("success"):
+            raise OculOSError(body.get("error", f"HTTP {r.status_code}"))
+        return body.get("data")
+
+    def _get(self, path: str, params: Optional[dict] = None) -> Any:
+        s = self._get_session()
+        return self._unwrap(
+            s.get(f"{self.base_url}{path}", params=params, timeout=self._timeout)
+        )
+
+    def _post(self, path: str, json: Optional[dict] = None) -> Any:
+        s = self._get_session()
+        return self._unwrap(
+            s.post(f"{self.base_url}{path}", json=json, timeout=self._timeout)
+        )
+
+
+class OculOSDaemon:
+    """Manages the OculOS background daemon subprocess."""
+
+    def __init__(
+        self,
+        binary_path: Optional[str] = None,
+        base_url: str = _DEFAULT_BASE_URL,
+    ) -> None:
+        self.binary_path = Path(binary_path).resolve() if binary_path else _default_binary_path()
+        self.base_url = base_url
+        self.process: Optional[subprocess.Popen] = None
+        atexit.register(self.stop)
+
+    async def start(self) -> None:
+        if not self.binary_path.exists():
+            raise FileNotFoundError(f"OculOS binary not found at: {self.binary_path}")
+
+        # On Linux, ensure toolkit-accessibility is enabled so apps like
+        # Chrome expose their full AT-SPI tree (otherwise Chrome returns
+        # only ~5 top-level elements).
+        if os.name != "nt":
+            try:
+                subprocess.run(
+                    ["gsettings", "set", "org.gnome.desktop.interface",
+                     "toolkit-accessibility", "true"],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except FileNotFoundError:
+                log.debug("gsettings not found — skipping toolkit-accessibility check")
+            except subprocess.TimeoutExpired:
+                log.warning("gsettings timed out setting toolkit-accessibility")
+            except Exception as exc:
+                log.debug("could not set toolkit-accessibility: %s", exc)
+
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0  # type: ignore[attr-defined]
+        self.process = subprocess.Popen(
+            [str(self.binary_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        await self._wait_for_health(timeout_seconds=5.0)
+
+    async def _wait_for_health(self, timeout_seconds: float = 5.0) -> None:
+        """Poll /health until the daemon is ready; yield between polls."""
+        import requests  # lazy
+
+        start = time.time()
+        while time.time() - start < timeout_seconds:
+            try:
+                r = requests.get(f"{self.base_url}/health", timeout=1)
+                if r.status_code == 200:
+                    log.info("OculOS daemon ready at %s", self.base_url)
+                    return
+            except requests.exceptions.ConnectionError:
+                pass
+            await asyncio.sleep(0.1)
+        self.stop()
+        raise TimeoutError("OculOS daemon failed to start within the timeout period")
+
+    def stop(self) -> None:
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+            log.info("OculOS daemon stopped")
+
+
+# Elements that belong to browser chrome (address bar, tabs, bookmarks) —
+# transplanted marker list from ui.py; we never target these by accident.
+_BROWSER_CHROME_MARKERS = (
+    "address and search bar", "search or enter url",
+    "search google or type a url", "omnibox",
+    "bookmark", "bookmarks", "tab search", "new tab", "tab",
+    "extensions", "profile", "chrome toolbar",
+)
+
+# Per-app launch flags so launched apps expose accessibility trees.
+_CHROMIUM_BASED = ("chrome", "chromium", "electron", "vscode", "code",
+                   "slack", "spotify", "discord")
+
+
+def _launch_flags(name: str) -> tuple:
+    lname = name.lower()
+    if any(n in lname for n in _CHROMIUM_BASED):
+        return ("--force-renderer-accessibility --enable-accessibility "
+                "--disable-gpu --no-sandbox", {})
+    if "firefox" in lname:
+        return ("", {"GTK_MODULES": "gail:atk-bridge", "GNOME_ACCESSIBILITY": "1"})
+    return ("", {})
+
+
+def _node_to_element(node: dict, pid: int, path: str) -> Element:
+    rect = node.get("rect") or {}
+    name = node.get("title") or node.get("name") or node.get("label") or ""
+    return Element(
+        role=node.get("element_type") or "generic",
+        name=str(name),
+        bounds=Bounds(
+            x=float(rect.get("x", 0)), y=float(rect.get("y", 0)),
+            width=float(rect.get("width", 0)), height=float(rect.get("height", 0)),
+        ) if rect else None,
+        provenance=frozenset({Source.TREE}),
+        ref={"node_id": node.get("oculos_id"), "pid": pid, "path": path},
+        enabled=node.get("is_enabled", True) is not False,
+        focused=bool(node.get("is_focused", False)),
+        value=(str(node["value"]) if node.get("value") is not None
+               else (str(node["text_content"]) if node.get("text_content") else None)),
+    )
+
+
+class AccessibilityDriver:
+    """Driver over the OS accessibility tree (OculOS daemon)."""
+
+    name = "tree"
+
+    def __init__(
+        self,
+        *,
+        base_url: str = _DEFAULT_BASE_URL,
+        binary_path: Optional[str] = None,
+        auto_start_daemon: bool = True,
+    ) -> None:
+        self.client = OculOSClient(base_url=base_url)
+        self.daemon = OculOSDaemon(binary_path=binary_path, base_url=base_url)
+        self._auto_start_daemon = auto_start_daemon
+        self._started = False
+
+    # -- lifecycle ----------------------------------------------------------
+
+    async def start(self) -> None:
+        """Ensure the daemon is reachable, launching it if allowed."""
+        if self._started:
+            return
+        try:
+            self.client.health()
+            self._started = True
+            return
+        except Exception:
+            pass
+        if not self._auto_start_daemon:
+            raise SurfaceUnreadable(
+                f"OculOS daemon not reachable at {self.client.base_url} "
+                "and auto-start is disabled"
+            )
+        await self.daemon.start()
+        self._started = True
+
+    async def stop(self) -> None:
+        self.daemon.stop()
+        self._started = False
+
+    # -- helpers ------------------------------------------------------------
+
+    def _focused_window(self) -> dict:
+        try:
+            windows = self.client.list_windows()
+        except Exception as exc:
+            raise SurfaceUnreadable(f"cannot list windows: {exc}") from exc
+        if not windows:
+            raise SurfaceUnreadable("no visible windows")
+        focused = [w for w in windows if w.get("is_focused") or w.get("focused")]
+        return focused[0] if focused else windows[0]
+
+    @staticmethod
+    def _flatten(node: dict, pid: int, out: List[Element], path: str = "0") -> None:
+        if node.get("oculos_id"):
+            out.append(_node_to_element(node, pid, path))
+        for i, child in enumerate(node.get("children") or []):
+            AccessibilityDriver._flatten(child, pid, out, f"{path}.{i}")
+
+    def _window_rect(self, pid: int) -> Optional[Dict[str, float]]:
+        try:
+            for w in self.client.list_windows():
+                if w.get("pid") == pid:
+                    return w.get("rect") or None
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _is_browser_chrome(el: Element) -> bool:
+        text = f"{el.name} {el.value or ''} {el.role}".lower()
+        return any(marker in text for marker in _BROWSER_CHROME_MARKERS)
+
+    def _check_bounds_sanity(self, el: Element, pid: int) -> None:
+        """Coordinate sanity before pointer actions: element must sit inside
+        the window rect, else the tree is stale/lying — raise rather than
+        click a phantom location."""
+        if el.bounds is None:
+            return
+        rect = self._window_rect(pid)
+        if not rect:
+            return
+        wx, wy = float(rect.get("x", 0)), float(rect.get("y", 0))
+        ww, wh = float(rect.get("width", 0)), float(rect.get("height", 0))
+        local = Bounds(el.bounds.x - wx, el.bounds.y - wy,
+                       el.bounds.width, el.bounds.height)
+        if not local.sane_within(ww, wh):
+            raise TargetObstructed(
+                f"element {el.name!r} has bounds outside its window rect",
+                reason="insane_bounds",
+                element_bounds=vars(el.bounds),
+                window_rect=rect,
+            )
+
+    def _resolve(self, description: str, pid: int) -> Element:
+        """Find the best interactive node matching the description.
+
+        Tries the daemon-side query first (exact then lowercase — the old
+        wait_for_element heuristic), then falls back to fuzzy ranking over
+        the full interactive set."""
+        candidates: List[dict] = []
+        for q in (description, description.lower()):
+            try:
+                candidates = self.client.find_elements(pid, query=q, interactive=True)
+            except Exception:
+                candidates = []
+            if candidates:
+                break
+        if not candidates:
+            try:
+                candidates = self.client.find_elements(pid, interactive=True) or []
+            except Exception as exc:
+                raise SurfaceUnreadable(f"element search failed: {exc}") from exc
+
+        elements = [_node_to_element(n, pid, "?") for n in candidates]
+        # Filter browser chrome unless nothing else matches (ui.py heuristic:
+        # the address bar's AT-SPI position shifts with focus state and can
+        # shadow page content).
+        page_elements = [e for e in elements if not self._is_browser_chrome(e)]
+        pool = page_elements or elements
+
+        match = best_match(pool, description)
+        if match is None and pool is page_elements and elements:
+            match = best_match(elements, description)
+        if match is None:
+            raise TargetNotFound(
+                f"no accessible element matches {description!r} in window {pid}",
+                target=description,
+                suggestions=suggestions(pool),
+            )
+        return match
+
+    # -- Driver protocol ----------------------------------------------------
+
+    async def observe(self) -> Observation:
+        await self.start()
+        window = self._focused_window()
+        pid = int(window.get("pid", 0))
+        try:
+            tree = self.client.get_tree(pid)
+        except Exception as exc:
+            raise SurfaceUnreadable(f"cannot fetch tree for pid {pid}: {exc}") from exc
+
+        elements: List[Element] = []
+        self._flatten(tree, pid, elements)
+        modal_count = sum(
+            1 for e in elements if e.role.lower() in ("dialog", "alertdialog", "alert dialog")
+        )
+        focused_key = next((e.key for e in elements if e.focused), None)
+        return Observation(
+            surface=f"window:{pid}",
+            kind="native",
+            title=str(window.get("title") or ""),
+            elements=elements,
+            modal_count=modal_count,
+            focused_key=focused_key,
+        )
+
+    async def act(self, action: Action) -> Optional[Element]:
+        await self.start()
+
+        if action.kind is ActionKind.NAVIGATE:
+            self._launch_app(action.value or "")
+            return None
+
+        if action.kind is ActionKind.PRESS:
+            if not action.value:
+                raise TargetNotFound("press requires a key chord in action.value")
+            self._press_keys(action.value)
+            return None
+
+        window = self._focused_window()
+        pid = int(window.get("pid", 0))
+
+        if action.kind is ActionKind.SCROLL:
+            if action.target:
+                el = self._resolve(action.target, pid)
+                eid = str(el.ref.get("node_id"))
+                self.client.scroll_into_view(eid)
+                return el
+            self._scroll_fallback(action.value or "down")
+            return None
+
+        if not action.target:
+            raise TargetNotFound(f"{action.kind.value} requires a target description")
+        el = self._resolve(action.target, pid)
+        eid = str(el.ref.get("node_id"))
+
+        if action.kind is ActionKind.CLICK:
+            self._check_bounds_sanity(el, pid)
+            if not el.enabled:
+                raise TargetObstructed(
+                    f"element {el.name!r} is disabled", reason="disabled",
+                )
+            self._do_with_stale_retry(action, el, pid, lambda e: self.client.click(e))
+            return el
+
+        if action.kind is ActionKind.FILL:
+            if action.value is None:
+                raise TargetNotFound("fill requires a value")
+            self._type_into(el, pid, action)
+            return el
+
+        if action.kind is ActionKind.SELECT:
+            if action.value is None:
+                raise TargetNotFound("select requires a value (option text)")
+            return self._select_option(el, pid, action)
+
+        raise TargetNotFound(f"unsupported action kind: {action.kind}")
+
+    async def screenshot(self) -> Optional[bytes]:
+        try:
+            import io
+
+            import pyautogui  # lazy
+
+            img = pyautogui.screenshot()
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        except Exception:
+            return None
+
+    # -- action internals ---------------------------------------------------
+
+    def _do_with_stale_retry(self, action: Action, el: Element, pid: int, fn: Any) -> None:
+        """Perform fn(element_id); on failure re-find (stale a11y node) and
+        retry once — transplanted from interact_with_element."""
+        eid = str(el.ref.get("node_id"))
+        try:
+            fn(eid)
+            return
+        except Exception as first_exc:
+            msg = str(first_exc)
+            # Transient COM errors: retry same id first (Windows UIA quirk).
+            if any(code in msg for code in ("0x80004005", "0x80040201")):
+                try:
+                    fn(eid)
+                    return
+                except Exception as exc2:
+                    msg = str(exc2)
+            try:
+                fresh = self._resolve(action.target or el.name, pid)
+                fn(str(fresh.ref.get("node_id")))
+                return
+            except (TargetNotFound, TargetObstructed):
+                raise
+            except Exception as exc3:
+                raise TargetObstructed(
+                    f"a11y interaction failed: {exc3}",
+                    reason="action_failed", first_error=msg,
+                ) from exc3
+
+    def _type_into(self, el: Element, pid: int, action: Action) -> None:
+        """set_text with the multiline heuristic from ui.py type_into:
+        AT-SPI SetValue cannot insert mid-string newlines, so multiline
+        values need real keyboard simulation."""
+        text = str(action.value)
+        stripped = text.rstrip("\n")
+        trailing = len(text) - len(stripped)
+        pyautogui = self._try_pyautogui()
+
+        if "\n" in stripped and pyautogui is not None:
+            eid = str(el.ref.get("node_id"))
+            self.client.click(eid)
+            time.sleep(0.15)
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.press("delete")
+            segments = stripped.split("\n")
+            for i, segment in enumerate(segments):
+                if segment:
+                    pyautogui.typewrite(segment, interval=0.03)
+                if i < len(segments) - 1:
+                    pyautogui.press("enter")
+            for _ in range(trailing):
+                pyautogui.press("enter")
+        elif trailing and pyautogui is not None:
+            self._do_with_stale_retry(
+                action, el, pid, lambda e: self.client.set_text(e, stripped)
+            )
+            time.sleep(0.05)
+            for _ in range(trailing):
+                pyautogui.press("enter")
+        else:
+            self._do_with_stale_retry(
+                action, el, pid, lambda e: self.client.set_text(e, text)
+            )
+
+    def _select_option(self, el: Element, pid: int, action: Action) -> Element:
+        """Expand the dropdown, then find and select the option node."""
+        eid = str(el.ref.get("node_id"))
+        try:
+            self.client.expand(eid)
+        except Exception:
+            try:
+                self.client.click(eid)
+            except Exception:
+                pass
+        time.sleep(0.3)
+        try:
+            options = self.client.find_elements(pid, query=str(action.value)) or []
+        except Exception:
+            options = []
+        option_els = [_node_to_element(n, pid, "?") for n in options]
+        ranked = rank_matches(option_els, str(action.value))
+        if not ranked:
+            raise TargetNotFound(
+                f"option {action.value!r} not found in dropdown {action.target!r}",
+                target=action.target,
+                suggestions=suggestions(option_els),
+            )
+        opt = ranked[0].element
+        try:
+            self.client.select(str(opt.ref.get("node_id")))
+        except Exception:
+            self.client.click(str(opt.ref.get("node_id")))
+        return opt
+
+    def _launch_app(self, app_name: str) -> None:
+        """Launch an app with accessibility flags (from ui.py manage_window)."""
+        if not app_name:
+            raise TargetNotFound("navigate requires an app name in action.value")
+        system = platform.system()
+        if system == "Windows":
+            try:
+                os.startfile(app_name)  # type: ignore[attr-defined]
+            except (FileNotFoundError, OSError):
+                subprocess.Popen(f"start {app_name}", shell=True)
+        elif system == "Darwin":
+            subprocess.Popen(["open", "-a", app_name])
+        else:
+            flags, env_vars = _launch_flags(app_name)
+            cmd = f"{app_name} {flags}".strip() if flags else app_name
+            env = {**os.environ, **env_vars}
+            subprocess.Popen(cmd, shell=True, env=env)
+
+    def _press_keys(self, chord: str) -> None:
+        pyautogui = self._try_pyautogui()
+        if pyautogui is None:
+            raise TargetObstructed(
+                "pyautogui unavailable — cannot send raw keys",
+                reason="no_keyboard_backend",
+            )
+        keys = [k.strip().lower() for k in chord.split("+") if k.strip()]
+        if len(keys) > 1:
+            pyautogui.hotkey(*keys)
+        elif keys:
+            pyautogui.press(keys[0])
+
+    def _scroll_fallback(self, direction: str) -> None:
+        pyautogui = self._try_pyautogui()
+        if pyautogui is None:
+            raise TargetObstructed(
+                "pyautogui unavailable — cannot scroll without a target",
+                reason="no_pointer_backend",
+            )
+        amount = 300 if direction.lower() == "up" else -300
+        pyautogui.scroll(amount)
+
+    @staticmethod
+    def _try_pyautogui() -> Any:
+        try:
+            import pyautogui  # lazy
+
+            return pyautogui
+        except Exception:
+            return None

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head><title>Toolbar</title>
+<style>
+  .toolbar{display:flex;gap:8px;padding:8px;background:#f3f3f3}
+  .toolbar div{width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:4px}
+  .toolbar div:hover{background:#ddd}
+  #panel{display:none;padding:1rem;border:1px solid #ccc;margin-top:8px}
+</style></head>
+<body>
+  <!-- Divs-as-buttons, no roles, no labels: invisible to the a-tree,
+       findable only by DOM structure or vision. -->
+  <div class="toolbar">
+    <div id="i-home">🏠</div>
+    <div id="i-search">🔍</div>
+    <div id="i-gear">⚙️</div>
+    <div id="i-user">👤</div>
+  </div>
+  <div id="panel"><h2>Settings</h2><label>Theme <select><option>Light</option><option>Dark</option></select></label></div>
+  <script>
+    document.getElementById('i-gear').onclick = () =>
+      document.getElementById('panel').style.display = 'block';
+  </script>
+</body>
+</html>

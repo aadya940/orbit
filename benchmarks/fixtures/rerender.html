@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><title>Rerender</title></head>
+<body>
+  <h1>Checkout</h1>
+  <div id="root"><button id="continue-1">Continue</button></div>
+  <p id="done" style="display:none">Order confirmed</p>
+  <script>
+    // 500ms after load the button node is replaced: any handle resolved
+    // before the swap is stale. Only the fresh node works.
+    setTimeout(() => {
+      const root = document.getElementById('root');
+      root.innerHTML = '<button id="continue-2">Continue</button>';
+      document.getElementById('continue-2').onclick = () =>
+        document.getElementById('done').style.display = 'block';
+    }, 500);
+  </script>
+</body>
+</html>
