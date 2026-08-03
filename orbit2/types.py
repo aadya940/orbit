@@ -125,6 +125,10 @@ class Element:
     enabled: bool = True
     focused: bool = False
     value: Optional[str] = None
+    # Secondary accessible text (help_text, tooltip, keyboard shortcut).
+    # Crucial for symbol-labeled controls: a calculator's '×' button often
+    # carries hint "Multiply [*]" — the only place its purpose is in words.
+    hint: Optional[str] = None
 
     @property
     def confidence(self) -> float:

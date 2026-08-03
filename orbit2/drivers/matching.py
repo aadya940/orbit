@@ -85,6 +85,24 @@ def _token_overlap(a: str, b: str) -> float:
     return len(ta & tb) / max(len(ta), len(tb))
 
 
+# Generic UI-symbol vocabulary: controls labeled with a bare glyph that
+# users (and models) describe in words. Desktop-wide, not app-specific.
+_WORD_TO_SYMBOL = {
+    "equals": ("=",),
+    "plus": ("+",), "add": ("+",),
+    "minus": ("−", "-"), "subtract": ("−", "-"),
+    # NB: deliberately no ASCII "x" alias — calculators have an algebra
+    # variable button named 'x' (verified live on GNOME Calculator).
+    "multiply": ("×", "*"), "times": ("×", "*"),
+    "divide": ("÷", "/"),
+    "percent": ("%",),
+    "close": ("✕",),
+    "search": ("🔍",),
+    "settings": ("⚙", "⚙️"),
+    "menu": ("☰",),
+}
+
+
 def score_element(element: Element, description: str) -> float:
     """Score one element against a description. 0.0 = no match."""
     needle, role_hint = parse_description(description)
@@ -94,13 +112,26 @@ def score_element(element: Element, description: str) -> float:
     name = _normalize(element.name or "")
     value = _normalize(element.value or "")
     role = _normalize(element.role or "")
+    hint = _normalize(element.hint or "")
 
+    raw_name = (element.name or "").strip()
     score = 0.0
     if needle:
         if name == needle:
             score = 1.0
-        elif name and (needle in name or name in needle):
+        elif raw_name and raw_name in _WORD_TO_SYMBOL.get(needle, ()):
+            # Word-described symbol keys: "equals" -> '=', "multiply" -> '×'.
+            score = 1.0
+        elif name and needle in name:
             score = 0.7
+        # name-in-needle only for real words: 'c' ⊂ 'calculate result'
+        # must NOT match the C button (verified live on a calculator).
+        elif len(name) >= 3 and name in needle:
+            score = 0.7
+        elif hint and (needle in hint or _token_overlap(hint, needle) >= 0.5):
+            # Symbol-labeled controls ('×') carry their meaning in the
+            # hint ("Multiply [*]") — often the only word-based signal.
+            score = 0.65
         elif value and needle in value:
             score = 0.5
         else:

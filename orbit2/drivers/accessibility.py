@@ -264,10 +264,18 @@ def _launch_flags(name: str) -> tuple:
 
 
 def _node_to_element(node: dict, pid: int, path: str) -> Element:
+    # OculOS node schema (verified live): type, label, value, text_content,
+    # rect, enabled, focused, is_keyboard_focusable, oculos_id, actions.
     rect = node.get("rect") or {}
-    name = node.get("title") or node.get("name") or node.get("label") or ""
+    name = node.get("label") or node.get("title") or node.get("name") or ""
+    # AT-SPI 'enabled' is unreliable on GTK (live GNOME Calculator reports
+    # clickable buttons as enabled=false). Trust a False only when the node
+    # is also not keyboard-focusable — i.e. two signals agree it's inert.
+    enabled = True
+    if node.get("enabled") is False and not node.get("is_keyboard_focusable", False):
+        enabled = False
     return Element(
-        role=node.get("element_type") or "generic",
+        role=str(node.get("type") or node.get("element_type") or "generic").lower(),
         name=str(name),
         bounds=Bounds(
             x=float(rect.get("x", 0)), y=float(rect.get("y", 0)),
@@ -275,10 +283,11 @@ def _node_to_element(node: dict, pid: int, path: str) -> Element:
         ) if rect else None,
         provenance=frozenset({Source.TREE}),
         ref={"node_id": node.get("oculos_id"), "pid": pid, "path": path},
-        enabled=node.get("is_enabled", True) is not False,
-        focused=bool(node.get("is_focused", False)),
+        enabled=enabled,
+        focused=bool(node.get("focused") or node.get("is_focused") or False),
         value=(str(node["value"]) if node.get("value") is not None
                else (str(node["text_content"]) if node.get("text_content") else None)),
+        hint=(str(node.get("help_text") or node.get("keyboard_shortcut") or "") or None),
     )
 
 
@@ -298,6 +307,7 @@ class AccessibilityDriver:
         self.daemon = OculOSDaemon(binary_path=binary_path, base_url=base_url)
         self._auto_start_daemon = auto_start_daemon
         self._started = False
+        self._target_exe: Optional[str] = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -325,15 +335,37 @@ class AccessibilityDriver:
 
     # -- helpers ------------------------------------------------------------
 
+    # Compositor / desktop-shell processes: their AT-SPI trees describe the
+    # whole desktop's plumbing (thousands of 'generic' Wayland surface
+    # nodes), never the app the user cares about.
+    _SHELL_EXES = {
+        "gnome-shell", "mutter", "kwin_wayland", "kwin_x11", "plasmashell",
+        "xfwm4", "xfdesktop", "sway", "hyprland", "weston", "xwayland",
+    }
+
     def _focused_window(self) -> dict:
         try:
             windows = self.client.list_windows()
         except Exception as exc:
             raise SurfaceUnreadable(f"cannot list windows: {exc}") from exc
-        if not windows:
-            raise SurfaceUnreadable("no visible windows")
-        focused = [w for w in windows if w.get("is_focused") or w.get("focused")]
-        return focused[0] if focused else windows[0]
+        candidates = [
+            w for w in windows
+            if w.get("visible", True)
+            and str(w.get("exe_name", "")).lower() not in self._SHELL_EXES
+        ]
+        if not candidates:
+            raise SurfaceUnreadable("no visible application windows")
+        # 1. the app we last launched wins
+        if self._target_exe:
+            for w in candidates:
+                if self._target_exe in str(w.get("exe_name", "")).lower():
+                    return w
+        # 2. an explicitly focused window, if the daemon reports it
+        focused = [w for w in candidates if w.get("is_focused") or w.get("focused")]
+        if focused:
+            return focused[0]
+        # 3. otherwise the first real app window
+        return candidates[0]
 
     @staticmethod
     def _flatten(node: dict, pid: int, out: List[Element], path: str = "0") -> None:
@@ -377,27 +409,24 @@ class AccessibilityDriver:
                 window_rect=rect,
             )
 
-    def _resolve(self, description: str, pid: int) -> Element:
+    def _resolve(self, description: str, pid: int, _retry: bool = True) -> Element:
         """Find the best interactive node matching the description.
 
         Tries the daemon-side query first (exact then lowercase — the old
         wait_for_element heuristic), then falls back to fuzzy ranking over
         the full interactive set."""
-        candidates: List[dict] = []
-        for q in (description, description.lower()):
-            try:
-                candidates = self.client.find_elements(pid, query=q, interactive=True)
-            except Exception:
-                candidates = []
-            if candidates:
-                break
-        if not candidates:
-            try:
-                candidates = self.client.find_elements(pid, interactive=True) or []
-            except Exception as exc:
-                raise SurfaceUnreadable(f"element search failed: {exc}") from exc
-
-        elements = [_node_to_element(n, pid, "?") for n in candidates]
+        # Rank the full flattened tree with our own matcher. Verified live:
+        # the daemon's query search misses exact label matches, and its
+        # interactive=True filter excludes GTK buttons entirely (they expose
+        # no 'click' action) — the tree endpoint is the only honest source.
+        try:
+            tree = self.client.get_tree(pid)
+        except Exception as exc:
+            raise SurfaceUnreadable(f"cannot fetch tree for pid {pid}: {exc}") from exc
+        elements: List[Element] = []
+        self._flatten(tree, pid, elements)
+        if not elements:
+            raise SurfaceUnreadable("accessibility tree is empty")
         # Filter browser chrome unless nothing else matches (ui.py heuristic:
         # the address bar's AT-SPI position shifts with focus state and can
         # shadow page content).
@@ -407,6 +436,12 @@ class AccessibilityDriver:
         match = best_match(pool, description)
         if match is None and pool is page_elements and elements:
             match = best_match(elements, description)
+        if match is None and _retry:
+            # Verified live on GTK: the tree fetched immediately after an
+            # action is partial while the toolkit rebuilds it (alternating
+            # hit/miss pattern). One fresh fetch after a beat fixes it.
+            time.sleep(0.6)
+            return self._resolve(description, pid, _retry=False)
         if match is None:
             raise TargetNotFound(
                 f"no accessible element matches {description!r} in window {pid}",
@@ -605,6 +640,9 @@ class AccessibilityDriver:
         """Launch an app with accessibility flags (from ui.py manage_window)."""
         if not app_name:
             raise TargetNotFound("navigate requires an app name in action.value")
+        # Remember what we launched so observation targets this app's
+        # window, not whatever the window list happens to lead with.
+        self._target_exe = os.path.basename(app_name.split()[0]).lower()
         system = platform.system()
         if system == "Windows":
             try:

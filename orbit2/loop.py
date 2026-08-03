@@ -114,8 +114,9 @@ def _render_elements(obs: Observation, limit: int) -> List[str]:
     lines = ["elements:"]
     for e in obs.elements[:limit]:
         val = f" value={e.value!r}" if e.value is not None else ""
+        hint = f" ({e.hint})" if getattr(e, "hint", None) else ""
         flags = "" if e.enabled else " (disabled)"
-        lines.append(f"- {e.role} {e.name!r}{val}{flags}")
+        lines.append(f"- {e.role} {e.name!r}{hint}{val}{flags}")
     if len(obs.elements) > limit:
         lines.append(
             f"[... {len(obs.elements) - limit} more elements elided — "
