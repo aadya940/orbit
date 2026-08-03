@@ -15,6 +15,7 @@ Contract rules:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol, Sequence, runtime_checkable
@@ -128,6 +129,16 @@ async def run_ladder(
 
             after = await observe_via.observe()
             diff = diff_observations(before, after)
+
+            if not diff.changed and action.expects_effect:
+                # Never escalate on a single no-effect verdict: post-action
+                # observations can be partial while the toolkit rebuilds its
+                # tree (verified live on GTK — a re-clicked '8' turned 7x8
+                # into 7x88). Settle, observe again, and only treat the
+                # action as not-landed if two observations agree.
+                await asyncio.sleep(0.5)
+                after = await observe_via.observe()
+                diff = diff_observations(before, after)
             duration = (time.monotonic() - start) * 1000
 
             if diff.changed or not action.expects_effect:

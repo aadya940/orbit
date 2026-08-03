@@ -443,10 +443,12 @@ class AccessibilityDriver:
             time.sleep(0.6)
             return self._resolve(description, pid, _retry=False)
         if match is None:
+            near = suggestions(pool)
             raise TargetNotFound(
-                f"no accessible element matches {description!r} in window {pid}",
+                f"no accessible element matches {description!r} in window {pid}"
+                + (f"; closest labels: {near}" if near else ""),
                 target=description,
-                suggestions=suggestions(pool),
+                suggestions=near,
             )
         return match
 

@@ -85,28 +85,10 @@ def _token_overlap(a: str, b: str) -> float:
     return len(ta & tb) / max(len(ta), len(tb))
 
 
-# Generic UI-symbol vocabulary: controls labeled with a bare glyph that
-# users (and models) describe in words. Desktop-wide, not app-specific.
-_WORD_TO_SYMBOL = {
-    "equals": ("=",),
-    "plus": ("+",), "add": ("+",),
-    "minus": ("−", "-"), "subtract": ("−", "-"),
-    # NB: deliberately no ASCII "x" alias — calculators have an algebra
-    # variable button named 'x' (verified live on GNOME Calculator).
-    "multiply": ("×", "*"), "times": ("×", "*"),
-    "divide": ("÷", "/"),
-    "percent": ("%",),
-    "close": ("✕",),
-    "search": ("🔍",),
-    "settings": ("⚙", "⚙️"),
-    "menu": ("☰",),
-}
-
-
 def score_element(element: Element, description: str) -> float:
     """Score one element against a description. 0.0 = no match."""
     needle, role_hint = parse_description(description)
-    if not needle and not role_hint:
+    if not needle and not role_hint and not description.strip():
         return 0.0
 
     name = _normalize(element.name or "")
@@ -114,13 +96,21 @@ def score_element(element: Element, description: str) -> float:
     role = _normalize(element.role or "")
     hint = _normalize(element.hint or "")
 
+    # The model quotes what it sees in the observation, often echoing the
+    # render format verbatim: `button '7' (Clear Display [Escape])`.
+    # A quoted span is therefore the strongest signal — the element's
+    # literal name — and must win before any fuzzy heuristics. This also
+    # covers symbol names ('×', '=') that normalization would strip.
     raw_name = (element.name or "").strip()
+    quoted = re.search(r"['\"]([^'\"]+)['\"]", description)
+    raw_needle = (quoted.group(1) if quoted else description).strip().strip("'\"")
     score = 0.0
-    if needle:
-        if name == needle:
+    if needle or raw_needle:
+        if raw_name and raw_name == raw_needle:
             score = 1.0
-        elif raw_name and raw_name in _WORD_TO_SYMBOL.get(needle, ()):
-            # Word-described symbol keys: "equals" -> '=', "multiply" -> '×'.
+        elif raw_name and raw_name.lower() == raw_needle.lower():
+            score = 0.95
+        elif name and name == needle:
             score = 1.0
         elif name and needle in name:
             score = 0.7
