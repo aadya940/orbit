@@ -28,19 +28,35 @@ class LLM(Protocol):
 class LiteLLMClient:
     """LLM implemented over `litellm.acompletion` (imported lazily)."""
 
-    def __init__(self, model: str, **kwargs: Any) -> None:
+    def __init__(self, model: str, *, timeout: float = 120.0, retries: int = 2, **kwargs: Any) -> None:
         self.model = model
+        self.timeout = timeout
+        self.retries = retries
         self.kwargs = kwargs
 
     async def complete(self, messages: List[dict], tools: List[dict]) -> LLMReply:
+        import asyncio
+
         import litellm  # lazy: tests never need it
 
-        response = await litellm.acompletion(
-            model=self.model,
-            messages=messages,
-            tools=tools or None,
-            **self.kwargs,
-        )
+        last_exc: Optional[Exception] = None
+        for attempt in range(self.retries + 1):
+            try:
+                response = await litellm.acompletion(
+                    model=self.model,
+                    messages=messages,
+                    tools=tools or None,
+                    timeout=self.timeout,
+                    **self.kwargs,
+                )
+                break
+            except (litellm.Timeout, litellm.RateLimitError, litellm.APIConnectionError,
+                    litellm.InternalServerError, litellm.ServiceUnavailableError) as exc:
+                last_exc = exc
+                if attempt < self.retries:
+                    await asyncio.sleep(2 * (attempt + 1))
+        else:
+            raise last_exc  # type: ignore[misc]
         message = response.choices[0].message
         text = getattr(message, "content", None)
         tool_call: Optional[ToolCall] = None

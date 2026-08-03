@@ -753,13 +753,23 @@ class DomDriver:
             await self.start()
         if self._page is not None and not self._page.is_closed():
             return self._page
-        pages = self._context.pages
-        valid = [p for p in pages if p.url != "about:blank"]
-        if valid:
-            self._page = valid[0]
-        elif pages:
-            self._page = pages[0]
-        else:
+        self._page = None
+        try:
+            pages = [p for p in self._context.pages if not p.is_closed()]
+            valid = [p for p in pages if p.url != "about:blank"]
+            if valid:
+                self._page = valid[0]
+            elif pages:
+                self._page = pages[0]
+            else:
+                self._page = await self._context.new_page()
+        except Exception:
+            # Browser/context died underneath us (crash, external close).
+            # Recover with a full relaunch instead of cascading the failure.
+            self._playwright = None
+            self._context = None
+            self._page = None
+            await self.start(purge_stale=False)
             self._page = await self._context.new_page()
         try:
             await self._page.bring_to_front()
@@ -770,19 +780,28 @@ class DomDriver:
     # -- Driver protocol ----------------------------------------------------
 
     async def observe(self) -> Observation:
-        page = await self._require_page()
-        try:
-            raw = await page.evaluate(_SCAN_JS, 150)
-        except Exception as exc:
-            raise SurfaceUnreadable(f"DOM scan failed: {exc}") from exc
+        for attempt in (0, 1):
+            page = await self._require_page()
+            try:
+                raw = await page.evaluate(_SCAN_JS, 150)
+                title = await page.title()
+                url = page.url
+                break
+            except Exception as exc:
+                # Tab closed/navigated mid-observation: drop the handle and
+                # retry once against whatever page is now live.
+                if attempt == 0 and ("closed" in str(exc).lower() or page.is_closed()):
+                    self._page = None
+                    continue
+                raise SurfaceUnreadable(f"DOM scan failed: {exc}") from exc
 
         elements = [_element_from_desc(d) for d in raw.get("elements", []) if d]
         focused_key = next((e.key for e in elements if e.focused), None)
         return Observation(
             surface="browser:main",
             kind="browser",
-            title=await page.title(),
-            url=page.url,
+            title=title,
+            url=url,
             elements=elements,
             text=raw.get("text", ""),
             modal_count=int(raw.get("modal_count", 0)),
