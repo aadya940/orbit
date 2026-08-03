@@ -607,6 +607,14 @@ class DomDriver:
         headless: bool = False,
     ) -> None:
         self._persistent_profile = persistent_profile
+        if executable_path is None:
+            # Prefer a system Chrome over patchright's bundled Chromium,
+            # which is typically not downloaded.
+            for candidate in ("/usr/bin/google-chrome", "/usr/bin/chromium",
+                              "/usr/bin/chromium-browser"):
+                if os.path.exists(candidate):
+                    executable_path = candidate
+                    break
         self._executable_path = executable_path
         self._headless = headless
         self._playwright: Any = None

@@ -18,22 +18,24 @@ DEFAULT_MODEL = "gpt-4o"
 
 def _default_drivers() -> Dict[str, Any]:
     try:
-        from .drivers.dom import DOMDriver
-        from .drivers.accessibility import AccessibilityDriver
-        from .drivers.keyboard import KeyboardDriver
-        from .drivers.vision import VisionDriver
+        from .drivers import default_drivers
+        return default_drivers()
     except ImportError as exc:
         raise ImportError(
             "Default Orbit drivers are not available in this build. "
             "Pass drivers explicitly: Session(drivers={'name': driver}). "
             f"(underlying error: {exc})"
         ) from exc
-    return {
-        "dom": DOMDriver(),
-        "tree": AccessibilityDriver(),
-        "vision": VisionDriver(),
-        "keyboard": KeyboardDriver(),
-    }
+
+
+async def _call_if_present(obj: Any, *names: str) -> None:
+    for name in names:
+        fn = getattr(obj, name, None)
+        if fn is not None:
+            res = fn()
+            if hasattr(res, "__await__"):
+                await res
+            return
 
 
 class Session:
@@ -52,15 +54,13 @@ class Session:
     async def __aenter__(self) -> "Session":
         if self._drivers is None:
             self._drivers = _default_drivers()
+        for driver in self._drivers.values():
+            await _call_if_present(driver, "start")
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
         for driver in (self._drivers or {}).values():
-            close = getattr(driver, "close", None)
-            if close is not None:
-                res = close()
-                if hasattr(res, "__await__"):
-                    await res
+            await _call_if_present(driver, "stop", "close")
 
     # -- internals ---------------------------------------------------------
     def _world(self, max_steps: Optional[int]) -> World:

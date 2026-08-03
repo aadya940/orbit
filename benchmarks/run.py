@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE.parent))  # make orbit/orbit2 importable from anywhere
 RESULTS = HERE / "results"
 
 
