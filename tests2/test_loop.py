@@ -62,7 +62,7 @@ async def test_invalid_output_retried_then_fixed():
     assert result.status is RunStatus.SUCCESS
     assert result.output.title == "fixed"
     # the validation error was fed back to the LLM
-    assert any("failed validation" in m.get("content", "") for m in llm.calls[1])
+    assert any("failed validation" in (m.get("content") or "") for m in llm.calls[1])
 
 
 async def test_invalid_output_three_times_fails():
@@ -91,4 +91,4 @@ async def test_target_unresolvable_fed_back():
     result = await loop.run("click missing", world, llm)
     assert result.status is RunStatus.SUCCESS
     assert result.output == "gave up gracefully"
-    assert any("target_unresolvable" in m.get("content", "") for m in llm.calls[1])
+    assert any("target_unresolvable" in (m.get("content") or "") for m in llm.calls[1])

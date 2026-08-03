@@ -37,7 +37,12 @@ or tool result, then call exactly one tool:
   `value` is the text or option.
 - press(keys): press a key or chord, e.g. "Enter", "ctrl+s".
 - navigate(value): open a URL or application.
-- observe(): request a fresh snapshot of the screen.
+- observe(detail, offset, query): request screen content at the detail you
+  need. Default is a compact summary. If the answer should be on-screen
+  but is not in what you were shown, do NOT scroll or click around —
+  call observe(detail="text", offset=...) to page through the full text,
+  or observe(query="...") to get text around matches. Elision notices
+  tell you exactly how much more exists.
 - ask_human(reason): escalate when blocked (CAPTCHA, login, ambiguity,
   destructive step needing approval).
 - finish(output): end the run with your final result. If a schema was
@@ -76,13 +81,79 @@ def _tool_defs(schema: Optional[Type[BaseModel]]) -> List[dict]:
         }, ["kind"]),
         tool("press", "Press a key or chord", {"keys": {"type": "string"}}, ["keys"]),
         tool("navigate", "Open a URL or app", {"value": {"type": "string"}}, ["value"]),
-        tool("observe", "Force a fresh observation", {}, []),
+        tool("observe", "Request screen content at a chosen detail level", {
+            "detail": {
+                "type": "string",
+                "enum": ["summary", "text", "elements", "full"],
+                "description": "summary (default): elements + start of text. "
+                               "text: page through the full visible text. "
+                               "elements: the complete element list. "
+                               "full: everything (expensive).",
+            },
+            "offset": {"type": "integer",
+                       "description": "char offset into visible text (with detail='text')"},
+            "query": {"type": "string",
+                      "description": "return text surrounding matches of this string"},
+        }, []),
         tool("ask_human", "Escalate to a human", {"reason": {"type": "string"}}, ["reason"]),
         tool("finish", "End the run with the final output", {"output": finish_output}, []),
     ]
 
 
-def _render_full(obs: Observation) -> str:
+# Hard ceilings: the model chooses *within* these; it never gets unbounded
+# output. Allocation is the model's call, the total is the loop's.
+_SUMMARY_TEXT = 2_000
+_TEXT_PAGE = 8_000
+_MAX_ELEMENTS_SUMMARY = 80
+_MAX_ELEMENTS_FULL = 400
+_QUERY_WINDOW = 400
+_QUERY_MAX_HITS = 5
+
+
+def _render_elements(obs: Observation, limit: int) -> List[str]:
+    lines = ["elements:"]
+    for e in obs.elements[:limit]:
+        val = f" value={e.value!r}" if e.value is not None else ""
+        flags = "" if e.enabled else " (disabled)"
+        lines.append(f"- {e.role} {e.name!r}{val}{flags}")
+    if len(obs.elements) > limit:
+        lines.append(
+            f"[... {len(obs.elements) - limit} more elements elided — "
+            "observe(detail='elements') for all]"
+        )
+    return lines
+
+
+def _render_text(obs: Observation, offset: int, limit: int) -> List[str]:
+    total = len(obs.text)
+    offset = max(0, min(offset, total))
+    chunk = obs.text[offset:offset + limit]
+    lines = [f"visible text (chars {offset}-{offset + len(chunk)} of {total}):", chunk]
+    if offset + len(chunk) < total:
+        lines.append(
+            f"[... {total - offset - len(chunk)} more chars — "
+            f"observe(detail='text', offset={offset + len(chunk)}) for the next page]"
+        )
+    return lines
+
+
+def _render_query(obs: Observation, query: str) -> List[str]:
+    text, needle = obs.text, query.lower()
+    hits, start = [], 0
+    while len(hits) < _QUERY_MAX_HITS:
+        i = text.lower().find(needle, start)
+        if i < 0:
+            break
+        lo, hi = max(0, i - _QUERY_WINDOW), min(len(text), i + len(needle) + _QUERY_WINDOW)
+        hits.append(f"...{text[lo:hi]}...")
+        start = hi
+    if not hits:
+        return [f"no matches for {query!r} in visible text ({len(text)} chars total)"]
+    return [f"text around {len(hits)} match(es) for {query!r}:"] + hits
+
+
+def _render(obs: Observation, detail: str = "summary", offset: int = 0,
+            query: Optional[str] = None) -> str:
     lines = [
         f"[observation {obs.content_hash}] surface={obs.surface} kind={obs.kind}",
         f"title: {obs.title}",
@@ -91,13 +162,21 @@ def _render_full(obs: Observation) -> str:
         lines.append(f"url: {obs.url}")
     if obs.modal_count:
         lines.append(f"modals open: {obs.modal_count}")
-    lines.append("elements:")
-    for e in obs.elements[:150]:
-        val = f" value={e.value!r}" if e.value is not None else ""
-        flags = "" if e.enabled else " (disabled)"
-        lines.append(f"- {e.role} {e.name!r}{val}{flags}")
-    if obs.text:
-        lines.append(f"visible text: {obs.text[:2000]}")
+
+    if query:
+        lines += _render_elements(obs, _MAX_ELEMENTS_SUMMARY)
+        lines += _render_query(obs, query)
+    elif detail == "text":
+        lines += _render_text(obs, offset, _TEXT_PAGE)
+    elif detail == "elements":
+        lines += _render_elements(obs, _MAX_ELEMENTS_FULL)
+    elif detail == "full":
+        lines += _render_elements(obs, _MAX_ELEMENTS_FULL)
+        lines += _render_text(obs, 0, _TEXT_PAGE + _SUMMARY_TEXT)
+    else:  # summary
+        lines += _render_elements(obs, _MAX_ELEMENTS_SUMMARY)
+        if obs.text:
+            lines += _render_text(obs, 0, _SUMMARY_TEXT)
     return "\n".join(lines)
 
 
@@ -147,6 +226,7 @@ async def _run(
 
     last_obs: Optional[Observation] = None
     output_retries = 0
+    step_idx = 0
 
     def result(status: RunStatus, output: Any = None, error: Optional[OrbitError] = None) -> RunResult:
         journal.append("run_end", status=status.value)
@@ -165,7 +245,7 @@ async def _run(
             obs = None
         if obs is not None:
             if last_obs is None:
-                messages.append({"role": "user", "content": _render_full(obs)})
+                messages.append({"role": "user", "content": _render(obs)})
             elif obs.content_hash != last_obs.content_hash:
                 from .types import diff_observations
                 d = diff_observations(last_obs, obs)
@@ -175,6 +255,7 @@ async def _run(
             last_obs = obs
 
         # Think (one budget step per LLM call).
+        step_idx += 1
         try:
             world.spend(1)
         except BudgetExhausted as exc:
@@ -185,15 +266,33 @@ async def _run(
             tool=reply.tool_call.name if reply.tool_call else None,
             arguments=reply.tool_call.arguments if reply.tool_call else None,
         )
-        if reply.text:
-            messages.append({"role": "assistant", "content": reply.text})
         if reply.tool_call is None:
-            messages.append({"role": "user", "content": "Please respond with exactly one tool call."})
+            # Text-only reply: record it verbatim, demand a real function
+            # call. Never echo a fake "[tool call] ..." text format — the
+            # model imitates whatever the history looks like.
+            if reply.text:
+                messages.append({"role": "assistant", "content": reply.text})
+            messages.append({"role": "user", "content": (
+                "Respond with exactly one function call (act / press / navigate / "
+                "observe / ask_human / finish), not text."
+            )})
             continue
 
         name = reply.tool_call.name
         args = reply.tool_call.arguments or {}
-        messages.append({"role": "assistant", "content": f"[tool call] {name}({json.dumps(args, default=str)})"})
+        call_id = f"call_{step_idx}"
+        messages.append({
+            "role": "assistant",
+            "content": reply.text or None,
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args, default=str)},
+            }],
+        })
+
+        def tool_result(content: str) -> None:
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
 
         if name == "finish":
             raw = args.get("output")
@@ -204,10 +303,10 @@ async def _run(
                 journal.append("output_invalid", error=exc.message, retry=output_retries)
                 if output_retries > _MAX_OUTPUT_RETRIES:
                     return result(RunStatus.FAILED, error=exc)
-                messages.append({"role": "user", "content": (
+                tool_result(
                     f"finish() output failed validation: {exc.message}. "
                     "Call finish again with a corrected output."
-                )})
+                )
                 continue
             return result(RunStatus.SUCCESS, output=validated)
 
@@ -217,8 +316,15 @@ async def _run(
             return result(RunStatus.NEEDS_HUMAN, error=NeedsHuman(reason))
 
         if name == "observe":
-            if last_obs is not None:
-                messages.append({"role": "user", "content": _render_full(last_obs)})
+            if last_obs is None:
+                tool_result("no observation available")
+            else:
+                tool_result(_render(
+                    last_obs,
+                    detail=str(args.get("detail") or "summary"),
+                    offset=int(args.get("offset") or 0),
+                    query=args.get("query"),
+                ))
             continue
 
         # Action-mapping tools.
@@ -226,7 +332,7 @@ async def _run(
             try:
                 kind = ActionKind(args.get("kind", "click"))
             except ValueError:
-                messages.append({"role": "user", "content": f"unknown action kind: {args.get('kind')!r}"})
+                tool_result(f"unknown action kind: {args.get('kind')!r}")
                 continue
             action = Action(kind=kind, target=args.get("target"), value=args.get("value"))
         elif name == "press":
@@ -234,20 +340,20 @@ async def _run(
         elif name == "navigate":
             action = Action(kind=ActionKind.NAVIGATE, value=args.get("value"))
         else:
-            messages.append({"role": "user", "content": f"unknown tool: {name}"})
+            tool_result(f"unknown tool: {name}")
             continue
 
         try:
             action_result = await world.act(action)
         except TargetUnresolvable as exc:
-            messages.append({"role": "user", "content": (
+            tool_result(
                 f"TOOL ERROR ({exc.code}): {exc.message}. "
                 "Rephrase the target, try another approach, or finish/ask_human."
-            )})
+            )
             continue
         except NeedsHuman as exc:
             journal.append("needs_human", reason=exc.message)
             return result(RunStatus.NEEDS_HUMAN, error=exc)
-        messages.append({"role": "user", "content": (
-            f"TOOL RESULT: landed via {action_result.strategy}; {action_result.diff.summary()}"
-        )})
+        tool_result(
+            f"landed via {action_result.strategy}; {action_result.diff.summary()}"
+        )

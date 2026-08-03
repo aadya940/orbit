@@ -120,7 +120,9 @@ async def run_ladder(
             start = time.monotonic()
             try:
                 element = await driver.act(action)
-            except (TargetNotFound, TargetObstructed, SurfaceUnreadable) as exc:
+            except OrbitError as exc:
+                # Any typed failure from a backend is a failed rung to
+                # escalate past — never a run-killing crash.
                 errors.append(exc)
                 continue
 

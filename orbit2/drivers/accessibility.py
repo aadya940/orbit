@@ -35,6 +35,7 @@ from ..types import (
     Observation,
     Source,
     SurfaceUnreadable,
+    OrbitError,
     TargetNotFound,
     TargetObstructed,
 )
@@ -52,8 +53,14 @@ def _default_binary_path() -> Path:
     return repo_root / "orbit" / "_bin" / name
 
 
-class OculOSError(Exception):
-    """Raised when the OculOS API returns an error."""
+class OculOSError(OrbitError):
+    """Raised when the OculOS API returns an error.
+
+    Subclasses OrbitError so the fallback ladder treats daemon-side
+    failures as a failed rung to escalate past, not a run-killing crash.
+    """
+
+    code = "oculos_error"
 
 
 class OculOSClient:
