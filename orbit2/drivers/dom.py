@@ -33,6 +33,7 @@ from ..types import (
     TargetNotFound,
     TargetObstructed,
 )
+from .base import is_web_target
 from .matching import parse_description
 
 log = logging.getLogger("orbit2.drivers.dom")
@@ -808,13 +809,19 @@ class DomDriver:
             focused_key=focused_key,
         )
 
+    @staticmethod
+    def can_navigate(target: Optional[str]) -> bool:
+        """This driver opens web targets (URLs / bare hosts)."""
+        return is_web_target(target)
+
     async def act(self, action: Action) -> Optional[Element]:
         page = await self._require_page()
 
         if action.kind is ActionKind.NAVIGATE:
             if not action.value:
                 raise TargetNotFound("navigate requires a url in action.value")
-            await page.goto(action.value, wait_until="domcontentloaded")
+            url = action.value if "://" in action.value else f"https://{action.value}"
+            await page.goto(url, wait_until="domcontentloaded")
             return None
 
         if action.kind is ActionKind.PRESS:

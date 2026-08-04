@@ -34,6 +34,25 @@ from ..types import (
 )
 
 
+def is_web_target(target: Optional[str]) -> bool:
+    """True if a navigate target is a web address (URL scheme, or a bare
+    host[:port][/path] like localhost:3000 / example.com). The single
+    definition both the dom driver (claims these) and the accessibility
+    driver (claims the rest) route by — no per-driver string-sniffing."""
+    if not target or not target.strip():
+        return False
+    from urllib.parse import urlparse
+    t = target.strip()
+    if urlparse(t).scheme in ("http", "https", "file", "about", "data"):
+        return True
+    if " " in t:
+        return False
+    head = t.split("/")[0]
+    return head == "localhost" or head.startswith("localhost:") or (
+        "." in head and not head.endswith(".")
+    )
+
+
 @runtime_checkable
 class Driver(Protocol):
     """One perception/action backend."""
@@ -96,6 +115,29 @@ class LadderOutcome:
     errors: List[OrbitError] = field(default_factory=list)
 
 
+async def _observe_settled(
+    driver: Driver,
+    max_polls: int = 6,
+    interval: float = 0.15,
+) -> Observation:
+    """Observe until the surface stops changing, then return it.
+
+    A post-action observation can be captured mid-repaint (a GTK toolkit
+    rebuilding its tree, a browser still laying out), which reads as a
+    spurious diff or none at all. Instead of a fixed sleep-and-hope, poll
+    until two consecutive observations agree by content hash — the surface
+    has settled — bounded so a genuinely animating page still returns.
+    """
+    obs = await driver.observe()
+    for _ in range(max_polls):
+        await asyncio.sleep(interval)
+        nxt = await driver.observe()
+        if nxt.content_hash == obs.content_hash:
+            return nxt          # stable: two observations agree
+        obs = nxt
+    return obs                  # still moving after the bound — use latest
+
+
 async def run_ladder(
     drivers: Sequence[Driver],
     action: Action,
@@ -130,18 +172,8 @@ async def run_ladder(
                 errors.append(exc)
                 continue
 
-            after = await observe_via.observe()
+            after = await _observe_settled(observe_via)
             diff = diff_observations(before, after)
-
-            if not diff.changed and action.expects_effect:
-                # Never escalate on a single no-effect verdict: post-action
-                # observations can be partial while the toolkit rebuilds its
-                # tree (verified live on GTK — a re-clicked '8' turned 7x8
-                # into 7x88). Settle, observe again, and only treat the
-                # action as not-landed if two observations agree.
-                await asyncio.sleep(0.5)
-                after = await observe_via.observe()
-                diff = diff_observations(before, after)
             duration = (time.monotonic() - start) * 1000
 
             if diff.changed or not action.expects_effect:

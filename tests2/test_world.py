@@ -52,9 +52,9 @@ class _BlindDriver(FakeDriver):
         raise SurfaceUnreadable(f"{self.name} cannot perceive")
 
 
-async def test_auto_route_falls_through_unusable_driver():
-    # Even hinted toward dom, a blank/poor dom surface is unusable, so
-    # routing falls through to the tree driver that actually sees content.
+async def test_route_falls_through_unusable_driver():
+    # dom (tried first) sees a blank/poor surface -> unusable; routing falls
+    # through to the tree driver that actually sees content.
     poor = Observation(surface="browser", kind="browser",
                        elements=[Element(role="generic", name="")])
     rich = make_obs("7", "8", "×", "=", "C", "Clear")
@@ -63,11 +63,34 @@ async def test_auto_route_falls_through_unusable_driver():
         "tree": FakeDriver([rich], name="tree"),
         "keyboard": _BlindDriver([poor], name="keyboard"),
     })  # no primary -> auto_route
-    world._surface_hint = "web"             # hint prefers dom first...
+    world._started.update({"dom", "tree"})  # both running -> pure capability probe
     obs = await world.observe()
-    assert world.primary == "tree"          # ...but dom is unusable -> tree
+    assert world.primary == "tree"          # dom unusable -> tree
     assert obs.elements[0].name == "7"
     assert world.ladder_order[0] == "tree"  # ladder reordered behind it
+
+
+def test_navigator_dispatch_by_capability():
+    # Drivers own "can I open this?"; World asks, first yes wins.
+    world = World(drivers={
+        "dom": FakeDriver([make_obs("x")], name="dom"),
+        "tree": FakeDriver([make_obs("y")], name="tree"),
+    })
+    from orbit2.drivers.base import is_web_target
+
+    class _NavDom(FakeDriver):
+        @staticmethod
+        def can_navigate(t): return is_web_target(t)
+
+    class _NavTree(FakeDriver):
+        @staticmethod
+        def can_navigate(t): return bool(t) and not is_web_target(t)
+
+    world.drivers["dom"] = _NavDom([make_obs("x")], name="dom")
+    world.drivers["tree"] = _NavTree([make_obs("y")], name="tree")
+    assert world._pick_navigator("https://example.com") == "dom"
+    assert world._pick_navigator("gnome-calculator") == "tree"
+    assert world._pick_navigator("localhost:3000") == "dom"
 
 
 async def test_explicit_primary_disables_auto_route():
@@ -91,7 +114,7 @@ async def test_navigate_then_route():
     obs = await world.observe()
     assert obs.kind == "none"               # nothing open yet, no probe-launch
     await world.act(Action(kind=ActionKind.NAVIGATE, value="app:editor"))
-    assert world._surface_hint == "native"  # app name classified as native
+    assert "tree" in world._started          # app launched via the tree driver
     assert world._routed is False           # routing deferred to next observe
     obs = await world.observe()
     assert world._routed is True            # now routed against the real app

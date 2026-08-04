@@ -22,21 +22,6 @@ from .types import (
 )
 
 
-def _classify_target(value: Optional[str]) -> Optional[str]:
-    """Guess a navigate target's surface: 'web' for URLs, 'native' for app
-    names. Returns None when ambiguous (routing falls back to probing)."""
-    if not value:
-        return None
-    v = value.strip().lower()
-    if v.startswith(("http://", "https://", "file://", "www.")):
-        return "web"
-    if v.startswith(("app:", "/", "~")) or " " not in v and "." not in v:
-        return "native"
-    if "." in v.split("/")[0] and " " not in v:
-        return "web"  # bare domain like example.com
-    return None
-
-
 class World:
     def __init__(
         self,
@@ -69,18 +54,10 @@ class World:
         self._runtime.setdefault("started", set())
         self._routed: bool = False
 
-    # Session-shared driver runtime, exposed as plain attributes.
+    # Session-shared driver runtime, exposed as a plain attribute.
     @property
     def _started(self) -> Set[str]:
         return self._runtime["started"]
-
-    @property
-    def _surface_hint(self) -> Optional[str]:
-        return self._runtime.get("hint")
-
-    @_surface_hint.setter
-    def _surface_hint(self, value: Optional[str]) -> None:
-        self._runtime["hint"] = value
 
     # -- budget ------------------------------------------------------------
     @property
@@ -98,10 +75,10 @@ class World:
     # -- perception / action ----------------------------------------------
     async def observe(self) -> Observation:
         if self.auto_route and not self._routed:
-            # Nothing opened yet (no backend started, no hint): don't probe
-            # -launch every driver just to look at an empty desktop. Return
-            # an empty observation; the first navigate will set the surface.
-            if not self._started and self._surface_hint is None:
+            # Nothing opened yet: don't probe-launch every backend to look at
+            # an empty desktop. Return an empty observation; the first
+            # navigate opens a surface and the next observe routes to it.
+            if not self._started:
                 return Observation(surface="none", kind="none")
             await self._route()
         try:
@@ -114,17 +91,6 @@ class World:
             await self._route()
             return await self.drivers[self.primary].observe()
 
-    def _nav_driver(self, hint: Optional[str]) -> str:
-        """Driver that should execute a navigate for this surface hint."""
-        for n in self._PERCEPTION_PREF.get(hint or "", ["dom", "tree"]):
-            if n in self.drivers:
-                return n
-        return self.primary
-
-    # Which drivers are perception backends, in default preference order,
-    # and which surface hint favors each.
-    _PERCEPTION_PREF = {"web": ["dom", "tree"], "native": ["tree", "dom"]}
-
     async def _ensure_started(self, name: str) -> None:
         if name in self._started:
             return
@@ -136,20 +102,22 @@ class World:
                 await res
         self._started.add(name)
 
-    def _candidate_order(self) -> List[str]:
-        """Perception drivers to try, hint-preferred, then the rest."""
-        pref = self._PERCEPTION_PREF.get(self._surface_hint or "", [])
-        ordered = [n for n in pref if n in self.drivers]
-        ordered += [n for n in self.drivers if n not in ordered]
-        return ordered
+    def _route_order(self) -> List[str]:
+        """Perception drivers to probe: already-running ones first, cold
+        ones last. Preferring a live backend means we never cold-start a
+        browser when a running driver already sees the surface — no
+        target-string guessing required."""
+        started = [n for n in self.drivers if n in self._started]
+        cold = [n for n in self.drivers if n not in self._started]
+        return started + cold
 
     async def _route(self) -> None:
-        """Pick the perception driver that sees the focused surface, starting
-        drivers lazily in hint order and stopping at the first usable one —
-        so a native task never launches a browser (and vice versa)."""
+        """Pick the perception driver that actually sees the focused surface.
+        Probe running drivers first, cold ones only if none running can see,
+        and commit to the first usable one."""
         scores: List[CapabilityScore] = []
         chosen: Optional[str] = None
-        for name in self._candidate_order():
+        for name in self._route_order():
             try:
                 await self._ensure_started(name)
                 obs = await self.drivers[name].observe()
@@ -159,16 +127,14 @@ class World:
             scores.append(cs)
             if cs.usable:
                 chosen = name
-                break  # good enough — don't start the remaining backends
+                break  # first driver that sees the surface wins
         if chosen:
             self.primary = chosen
-        # Ladder: usable perception driver first, then everything else
-        # (keyboard/vision as action fallbacks) in declared order.
         rest = [n for n in self.drivers if n != self.primary]
         self.ladder_order = [self.primary] + rest
         self._routed = True
         self.journal.append(
-            "route", primary=self.primary, hint=self._surface_hint,
+            "route", primary=self.primary,
             scores={s.driver: round(s.score, 3) for s in scores},
         )
 
@@ -177,30 +143,40 @@ class World:
         self._routed = False
 
     async def _navigate(self, action: Action) -> ActionResult:
-        """Open a URL or app on the hint-matched driver, then defer routing
-        to the next observe (the surface now exists to be scored)."""
-        hint = _classify_target(action.value)
-        self._surface_hint = hint
-        target = self._nav_driver(hint)
-        await self._ensure_started(target)
-        self.primary = target
+        """Open a URL or app. The driver that *can* open this target decides
+        the surface — dom opens URLs, tree launches apps — so we ask each
+        driver rather than pattern-matching the target string ourselves."""
+        target_name = self._pick_navigator(action.value)
+        await self._ensure_started(target_name)
+        self.primary = target_name
         self._routed = False  # next observe re-confirms against the real surface
         try:
-            await self.drivers[target].act(action)
+            await self.drivers[target_name].act(action)
             landed, note = True, ""
         except OrbitError as exc:
             landed, note = False, exc.message
         self.journal.append(
             "action", kind_="navigate", target=action.value, value=action.value,
-            landed=landed, strategy=target, attempts=1, diff="navigated", errors=[note] if note else [],
+            landed=landed, strategy=target_name, attempts=1, diff="navigated",
+            errors=[note] if note else [],
         )
-        return ActionResult(landed=landed, action=action, strategy=target, note=note)
+        return ActionResult(landed=landed, action=action, strategy=target_name, note=note)
+
+    def _pick_navigator(self, target: Optional[str]) -> str:
+        """Ask each driver whether it can open this target; first yes wins.
+        Drivers own the definition ('is this a URL?' lives in the dom driver,
+        not in a hardcoded classifier here)."""
+        for name, driver in self.drivers.items():
+            can = getattr(driver, "can_navigate", None)
+            if can is not None and can(target):
+                return name
+        # No driver claimed it: fall back to the current primary.
+        return self.primary
 
     async def act(self, action: Action) -> ActionResult:
-        # Navigate is special: the target itself reveals the surface (URL ->
-        # browser, app name -> native), so dispatch it directly to the
-        # matching driver instead of scoring a pre-launch observation. The
-        # surface only exists *after* this runs, so the next observe routes.
+        # Navigate opens a surface that doesn't exist yet, so it can't be
+        # routed by observation. The driver that *can* open the target
+        # handles it; the next observe then routes perception normally.
         if action.kind is ActionKind.NAVIGATE and self.auto_route:
             return await self._navigate(action)
 

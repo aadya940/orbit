@@ -39,6 +39,7 @@ from ..types import (
     TargetNotFound,
     TargetObstructed,
 )
+from .base import is_web_target
 from .matching import best_match, rank_matches, suggestions
 
 log = logging.getLogger("orbit2.drivers.accessibility")
@@ -523,6 +524,12 @@ class AccessibilityDriver:
             modal_count=modal_count,
             focused_key=focused_key,
         )
+
+    @staticmethod
+    def can_navigate(target: Optional[str]) -> bool:
+        """This driver launches applications: any non-empty target the dom
+        driver doesn't claim as a web address."""
+        return bool(target and target.strip()) and not is_web_target(target)
 
     async def act(self, action: Action) -> Optional[Element]:
         await self.start()
