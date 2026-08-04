@@ -45,11 +45,15 @@ class Session:
         policy: Optional[Policy] = None,
         max_steps: int = 40,
         drivers: Optional[Dict[str, Any]] = None,
+        tools: Optional[list] = None,
+        include_default_tools: bool = True,
     ) -> None:
         self.llm: LLM = LiteLLMClient(llm) if isinstance(llm, str) else llm
         self.policy = policy or Policy()
         self.max_steps = max_steps
         self._drivers = drivers
+        from .tools import build_registry
+        self._tools = build_registry(tools, include_defaults=include_default_tools)
         # Shared across verbs: which backends are started + last surface
         # hint. Drivers start lazily (on first use) so a native-only task
         # never launches a browser, and a web-only task never starts the
@@ -101,6 +105,7 @@ class Session:
             schema=schema,
             guidance=guidance,
             timeout=timeout,
+            tools=self._tools,
         )
 
     # -- verbs -------------------------------------------------------------

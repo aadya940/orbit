@@ -52,6 +52,12 @@ or tool result, then call exactly one tool:
 - finish(output): end the run with your final result. If a schema was
   given, `output` must be a JSON object matching it exactly.
 
+You may also have tools for files, code, the clipboard and the web
+(listed in your tool schema). Prefer them when they are the shorter
+path: read a file directly instead of opening it in an editor, search
+or fetch a page instead of browsing to it, run_python for parsing and
+math. Drive the screen when the task genuinely needs the app.
+
 Rules:
 - One tool call per turn. Never invent elements not in the observation.
 - After each action you get a state-change summary; if nothing changed,
@@ -63,7 +69,8 @@ Rules:
 _MAX_OUTPUT_RETRIES = 2
 
 
-def _tool_defs(schema: Optional[Type[BaseModel]]) -> List[dict]:
+def _tool_defs(schema: Optional[Type[BaseModel]],
+               registry: Optional[dict] = None) -> List[dict]:
     def tool(name: str, desc: str, props: dict, required: List[str]) -> dict:
         return {
             "type": "function",
@@ -106,7 +113,7 @@ def _tool_defs(schema: Optional[Type[BaseModel]]) -> List[dict]:
         }, []),
         tool("ask_human", "Escalate to a human", {"reason": {"type": "string"}}, ["reason"]),
         tool("finish", "End the run with the final output", {"output": finish_output}, []),
-    ]
+    ] + [t.schema() for t in (registry or {}).values()]
 
 
 # Hard ceilings: the model chooses *within* these; it never gets unbounded
@@ -205,13 +212,15 @@ async def run(
     max_steps: Optional[int] = None,
     guidance: Optional[str] = None,
     timeout: Optional[float] = None,
+    tools: Optional[dict] = None,
 ) -> RunResult:
     if max_steps is not None:
         world.max_steps = max_steps
     try:
         if timeout is not None:
-            return await asyncio.wait_for(_run(task, world, llm, schema, guidance), timeout)
-        return await _run(task, world, llm, schema, guidance)
+            return await asyncio.wait_for(
+                _run(task, world, llm, schema, guidance, tools), timeout)
+        return await _run(task, world, llm, schema, guidance, tools)
     except asyncio.TimeoutError:
         world.journal.append("timeout", task=task)
         return RunResult(
@@ -226,10 +235,11 @@ async def _run(
     llm: LLM,
     schema: Optional[Type[BaseModel]],
     guidance: Optional[str],
+    registry: Optional[dict] = None,
 ) -> RunResult:
     journal = world.journal
     journal.append("run_start", task=task)
-    tools = _tool_defs(schema)
+    tools = _tool_defs(schema, registry)
 
     user = f"TASK: {task}"
     if schema is not None:
@@ -362,6 +372,14 @@ async def _run(
             action = Action(kind=ActionKind.PRESS, value=args.get("keys"), expects_effect=False)
         elif name == "navigate":
             action = Action(kind=ActionKind.NAVIGATE, value=args.get("value"))
+        elif registry and name in registry:
+            try:
+                out = await registry[name].call(**args)
+            except Exception as exc:  # tool errors are the model's to handle
+                out = f"{type(exc).__name__}: {exc}"
+            journal.append("tool", name=name, args=args, result=out[:400])
+            tool_result(out)
+            continue
         else:
             tool_result(f"unknown tool: {name}")
             continue
