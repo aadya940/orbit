@@ -332,6 +332,7 @@ class AccessibilityDriver:
         self._launched: List[subprocess.Popen] = []
         self._launched_exes: Set[str] = set()
         self._close_launched = close_launched
+        self._last_elements: List[Element] = []
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -513,6 +514,9 @@ class AccessibilityDriver:
 
         elements: List[Element] = []
         self._flatten(tree, pid, elements)
+        # Cache for ref addressing: the model points at the index it was
+        # shown, so we return that exact element instead of re-matching.
+        self._last_elements = elements
         modal_count = sum(
             1 for e in elements if e.role.lower() in ("dialog", "alertdialog", "alert dialog")
         )
@@ -560,13 +564,15 @@ class AccessibilityDriver:
         if action.kind is ActionKind.FILL:
             if action.value is None:
                 raise TargetNotFound("fill requires a value")
-            el = self._resolve_editable(action.target, pid)
+            el = self._by_ref(action.ref) or self._resolve_editable(action.target, pid)
             self._type_into(el, pid, action)
             return el
 
-        if not action.target:
-            raise TargetNotFound(f"{action.kind.value} requires a target description")
-        el = self._resolve(action.target, pid)
+        el = self._by_ref(action.ref)
+        if el is None:
+            if not action.target:
+                raise TargetNotFound(f"{action.kind.value} requires a ref or target")
+            el = self._resolve(action.target, pid)
         eid = str(el.ref.get("node_id"))
 
         if action.kind is ActionKind.CLICK:
@@ -591,6 +597,18 @@ class AccessibilityDriver:
 
     def _is_editable_text(self, el: Element) -> bool:
         return el.role.lower() in self._EDITABLE_ROLES
+
+    def _by_ref(self, ref: Optional[int]) -> Optional[Element]:
+        """Element the model pointed at, from the last rendered observation."""
+        if ref is None:
+            return None
+        if 0 <= ref < len(self._last_elements):
+            return self._last_elements[ref]
+        raise TargetNotFound(
+            f"ref {ref} is out of range (observation had "
+            f"{len(self._last_elements)} elements) — observe again",
+            target=str(ref),
+        )
 
     def _resolve_editable(self, description: Optional[str], pid: int) -> Element:
         """Resolve a fill target. Try the named description first, but fall
@@ -705,9 +723,35 @@ class AccessibilityDriver:
             for _ in range(trailing):
                 pyautogui.press("enter")
         else:
-            self._do_with_stale_retry(
-                action, el, pid, lambda e: self.client.set_text(e, text)
+            try:
+                self._do_with_stale_retry(
+                    action, el, pid, lambda e: self.client.set_text(e, text)
+                )
+            except OrbitError:
+                # Not every editable widget implements AT-SPI EditableText
+                # (verified live: GtkSourceView in gnome-text-editor raises
+                # UnknownMethod). Fall back to focusing it and typing for
+                # real — the same thing a human does.
+                self._type_by_keyboard(el, text)
+
+    def _type_by_keyboard(self, el: Element, text: str) -> None:
+        """Focus the element and type with real key events."""
+        pyautogui = self._try_pyautogui()
+        if pyautogui is None:
+            raise TargetObstructed(
+                "widget does not support accessibility text entry and "
+                "pyautogui is unavailable for keyboard fallback",
+                reason="no_text_interface",
             )
+        eid = str(el.ref.get("node_id"))
+        for attempt in (self.client.focus, self.client.click):
+            try:
+                attempt(eid)
+                break
+            except Exception:
+                continue
+        time.sleep(0.15)
+        pyautogui.typewrite(text, interval=0.02)
 
     def _select_option(self, el: Element, pid: int, action: Action) -> Element:
         """Expand the dropdown, then find and select the option node."""
@@ -756,10 +800,23 @@ class AccessibilityDriver:
         elif system == "Darwin":
             self._launched.append(subprocess.Popen(["open", "-a", app_name]))
         else:
+            import shlex
             flags, env_vars = _launch_flags(app_name)
-            cmd = f"{app_name} {flags}".strip() if flags else app_name
             env = {**os.environ, **env_vars}
-            self._launched.append(subprocess.Popen(cmd, shell=True, env=env))
+            # No shell: a display name like "Text Editor" would shell-split
+            # into a bogus command ("Text: not found") that fails silently.
+            argv = shlex.split(app_name) + (shlex.split(flags) if flags else [])
+            try:
+                self._launched.append(subprocess.Popen(
+                    argv, env=env,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                ))
+            except (FileNotFoundError, PermissionError, OSError) as exc:
+                raise TargetNotFound(
+                    f"cannot launch {app_name!r}: {exc}. Use the executable "
+                    "name (e.g. 'gnome-text-editor'), not a display name.",
+                    target=app_name,
+                ) from exc
 
     def _press_keys(self, chord: str) -> None:
         pyautogui = self._try_pyautogui()

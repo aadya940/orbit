@@ -625,6 +625,7 @@ class DomDriver:
         self._tmp_profile: Optional[str] = None
         self._cdp_connected = False
         self._lock = asyncio.Lock()
+        self._last_elements: List[Element] = []
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -798,6 +799,9 @@ class DomDriver:
                 raise SurfaceUnreadable(f"DOM scan failed: {exc}") from exc
 
         elements = [_element_from_desc(d) for d in raw.get("elements", []) if d]
+        # Cache for ref addressing: the model points at the index it was
+        # shown rather than re-describing the element in words.
+        self._last_elements = elements
         focused_key = next((e.key for e in elements if e.focused), None)
         return Observation(
             surface="browser:main",
@@ -902,9 +906,34 @@ class DomDriver:
             covered_by=blocked.get("coveredBy"),
         )
 
+    def _by_ref(self, ref: Optional[int]) -> Optional[Element]:
+        """Element the model pointed at, from the last rendered observation."""
+        if ref is None:
+            return None
+        if 0 <= ref < len(self._last_elements):
+            return self._last_elements[ref]
+        raise TargetNotFound(
+            f"ref {ref} is out of range (observation had "
+            f"{len(self._last_elements)} elements) — observe again",
+            target=str(ref),
+        )
+
     async def _click(self, page: Any, action: Action) -> Element:
+        el = self._by_ref(action.ref)
+        if el is not None:
+            cx, cy = el.ref.get("cx"), el.ref.get("cy")
+            if cx is not None and cy is not None:
+                if not el.enabled:
+                    raise TargetObstructed(
+                        f"element {el.name!r} is disabled", reason="disabled",
+                    )
+                await page.mouse.click(float(cx), float(cy))
+                await asyncio.sleep(0.15)
+                return el
+            action = Action(kind=action.kind, target=el.name or action.target,
+                            value=action.value)
         if not action.target:
-            raise TargetNotFound("click requires a target description")
+            raise TargetNotFound("click requires a ref or target description")
         text, role_hint = parse_description(action.target)
         result = await page.evaluate(
             _CLICK_JS, {"text": text or action.target, "roleHint": list(role_hint or [])}
@@ -929,10 +958,21 @@ class DomDriver:
         return _element_from_desc(clicked)
 
     async def _fill(self, page: Any, action: Action) -> Element:
-        if not action.target:
-            raise TargetNotFound("fill requires a target description")
         if action.value is None:
             raise TargetNotFound("fill requires a value")
+        el = self._by_ref(action.ref)
+        if el is not None:
+            cx, cy = el.ref.get("cx"), el.ref.get("cy")
+            if cx is not None and cy is not None:
+                await page.mouse.click(float(cx), float(cy))
+                await page.keyboard.press("Control+a")
+                await page.keyboard.type(str(action.value))
+                await asyncio.sleep(0.1)
+                return el
+            action = Action(kind=action.kind, target=el.name or action.target,
+                            value=action.value)
+        if not action.target:
+            raise TargetNotFound("fill requires a ref or target description")
         label, _ = parse_description(action.target)
         result = await page.evaluate(
             _FILL_JS, {"label": label or action.target, "value": action.value}

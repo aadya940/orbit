@@ -32,11 +32,12 @@ SYSTEM_PROMPT = """You are Orbit, an agent operating a computer to complete one 
 
 You interact only through tools. Each turn, review the latest observation
 or tool result, then call exactly one tool:
-- act(kind, target, value): perform click / fill / select / scroll on the
-  element best matching the natural-language `target`. For fill/select,
-  `value` is the text or option. To enter or paste text (into a field, a
-  text editor, a document), ALWAYS use act(kind="fill", target=<the text
-  area>, value=<the text>) — never press.
+- act(kind, ref, value): perform click / fill / select / scroll on an
+  element. Address it by `ref` — the [number] shown next to it in the
+  observation. Only fall back to `target` (a description) if nothing in
+  the list fits. For fill/select, `value` is the text or option. To enter
+  text (a field, a text editor, a document), ALWAYS use
+  act(kind="fill", ref=<the text area>, value=<the text>) — never press.
 - press(keys): press a SINGLE key or shortcut chord only, e.g. "Enter",
   "ctrl+s", "Tab". Never pass free text here.
 - navigate(value): open a URL or application.
@@ -79,7 +80,12 @@ def _tool_defs(schema: Optional[Type[BaseModel]]) -> List[dict]:
     return [
         tool("act", "Perform an action on the current surface", {
             "kind": {"type": "string", "enum": ["click", "fill", "select", "scroll"]},
-            "target": {"type": "string", "description": "natural-language element description"},
+            "ref": {"type": "integer",
+                    "description": "PREFERRED: the [number] of an element from the "
+                                   "observation. Exact — no name guessing."},
+            "target": {"type": "string",
+                       "description": "fallback when no ref fits: natural-language "
+                                      "element description"},
             "value": {"type": "string", "description": "text / option / scroll direction"},
         }, ["kind"]),
         tool("press", "Press a key or chord", {"keys": {"type": "string"}}, ["keys"]),
@@ -114,12 +120,19 @@ _QUERY_MAX_HITS = 5
 
 
 def _render_elements(obs: Observation, limit: int) -> List[str]:
-    lines = ["elements:"]
-    for e in obs.elements[:limit]:
+    """Render elements with their ref index — the model points at a ref
+    instead of re-describing an element we already showed it."""
+    lines = ["elements (act on one with ref=<number>):"]
+    for i, e in enumerate(obs.elements[:limit]):
         val = f" value={e.value!r}" if e.value is not None else ""
         hint = f" ({e.hint})" if getattr(e, "hint", None) else ""
-        flags = "" if e.enabled else " (disabled)"
-        lines.append(f"- {e.role} {e.name!r}{hint}{val}{flags}")
+        marks = []
+        if not e.enabled:
+            marks.append("disabled")
+        if e.focused:
+            marks.append("focused")
+        flags = f" [{', '.join(marks)}]" if marks else ""
+        lines.append(f"[{i}] {e.role} {e.name!r}{hint}{val}{flags}")
     if len(obs.elements) > limit:
         lines.append(
             f"[... {len(obs.elements) - limit} more elements elided — "
@@ -338,7 +351,13 @@ async def _run(
             except ValueError:
                 tool_result(f"unknown action kind: {args.get('kind')!r}")
                 continue
-            action = Action(kind=kind, target=args.get("target"), value=args.get("value"))
+            ref = args.get("ref")
+            action = Action(
+                kind=kind,
+                ref=int(ref) if ref is not None else None,
+                target=args.get("target"),
+                value=args.get("value"),
+            )
         elif name == "press":
             action = Action(kind=ActionKind.PRESS, value=args.get("keys"), expects_effect=False)
         elif name == "navigate":

@@ -164,6 +164,12 @@ class Observation:
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
+    def by_ref(self, ref: int) -> Optional["Element"]:
+        """Element at a rendered ref index (what the model points at)."""
+        if 0 <= ref < len(self.elements):
+            return self.elements[ref]
+        return None
+
 
 @dataclass
 class StateDiff:
@@ -246,6 +252,11 @@ class Action:
     kind: ActionKind
     target: Optional[str] = None   # natural-language target description
     value: Optional[str] = None    # text to type / option / url / key chord
+    # Direct address into the last observation's element list. The model
+    # sees numbered elements and points at one, so the driver never has to
+    # re-find by fuzzy string what was already rendered to it. `target`
+    # remains the description-based path (durable workflows, fallback).
+    ref: Optional[int] = None
     # Some effects legitimately produce no diff (e.g. copy). Callers may
     # declare that so verification doesn't false-positive.
     expects_effect: bool = True

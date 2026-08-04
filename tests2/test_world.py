@@ -152,6 +152,42 @@ async def test_navigate_switches_primary_across_surfaces():
     assert world.primary == "tree"           # app navigate -> switches, not sticky
 
 
+async def test_focus_persists_across_verbs():
+    # Regression: each verb builds a fresh World sharing session runtime.
+    # After switching to a native app, a LATER verb must still observe that
+    # app — not re-pick the browser just because it still "sees" its page.
+    page = make_obs("Sign in", "Search", "Repositories", "Issues", "Pulls")
+    app = make_obs("File", "Edit", "Untitled document", "Save", "Open")
+    from orbit2.drivers.base import is_web_target
+
+    class _Dom(FakeDriver):
+        surface = "web"
+        @staticmethod
+        def can_navigate(t): return is_web_target(t)
+
+    class _Tree(FakeDriver):
+        surface = "native"
+        @staticmethod
+        def can_navigate(t): return bool(t) and not is_web_target(t)
+
+    drivers = {
+        "dom": _Dom([page] * 6, name="dom"),
+        "tree": _Tree([app] * 6, name="tree"),
+    }
+    runtime: dict = {}
+
+    w1 = World(drivers=drivers, runtime=runtime)
+    await w1.act(Action(kind=ActionKind.NAVIGATE, value="https://github.com"))
+    await w1.act(Action(kind=ActionKind.NAVIGATE, value="gnome-text-editor"))
+    assert w1.primary == "tree"
+
+    # New verb, new World, same session runtime.
+    w2 = World(drivers=drivers, runtime=runtime)
+    obs = await w2.observe()
+    assert w2.primary == "tree"                    # focus remembered
+    assert any("Untitled" in e.name for e in obs.elements)  # saw the app
+
+
 def test_worlds_are_isolated():
     w1, _ = simple_world()
     w2, _ = simple_world()

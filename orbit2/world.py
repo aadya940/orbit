@@ -40,7 +40,11 @@ class World:
         # focused surface (browser -> dom, native window -> tree), re-picked
         # whenever the current one goes blind.
         self.auto_route: bool = primary is None
-        self.primary: str = primary or next(iter(self.drivers))
+        # Focused surface is SESSION state, not per-verb: a later verb must
+        # keep looking at the app the previous verb switched to, not re-pick
+        # a still-"visible" background browser.
+        remembered = (runtime or {}).get("primary")
+        self.primary: str = primary or remembered or next(iter(self.drivers))
         self.policy: Policy = policy or Policy()
         self.journal: Journal = journal or Journal()
         self.probe_cache: Dict[str, List[CapabilityScore]] = {}
@@ -103,13 +107,18 @@ class World:
         self._started.add(name)
 
     def _route_order(self) -> List[str]:
-        """Perception drivers to probe: already-running ones first, cold
-        ones last. Preferring a live backend means we never cold-start a
-        browser when a running driver already sees the surface — no
-        target-string guessing required."""
-        started = [n for n in self.drivers if n in self._started]
-        cold = [n for n in self.drivers if n not in self._started]
-        return started + cold
+        """Probe order: the surface we were last focused on first, then other
+        running drivers, then cold ones. Remembering focus keeps a later
+        verb on the app the previous verb switched to (a background browser
+        still 'sees' its page and would otherwise win)."""
+        order = [self.primary] if self.primary in self.drivers else []
+        order += [n for n in self.drivers if n in self._started and n not in order]
+        order += [n for n in self.drivers if n not in order]
+        return order
+
+    def _set_primary(self, name: str) -> None:
+        self.primary = name
+        self._runtime["primary"] = name  # carry focus across verbs
 
     async def _route(self) -> None:
         """Pick the perception driver that actually sees the focused surface.
@@ -129,7 +138,7 @@ class World:
                 chosen = name
                 break  # first driver that sees the surface wins
         if chosen:
-            self.primary = chosen
+            self._set_primary(chosen)
         self._rebuild_ladder()
         self._routed = True
         self.journal.append(
@@ -171,11 +180,11 @@ class World:
         # its now-background page and would wrongly win.) Only a genuine
         # blind (SurfaceUnreadable) triggers re-routing.
         if landed:
-            self.primary = target_name
+            self._set_primary(target_name)
             self._rebuild_ladder()  # ladder now excludes the other surface
             self._routed = True
         else:
-            self.primary = target_name
+            self._set_primary(target_name)
             self._routed = False
         self.journal.append(
             "action", kind_="navigate", target=action.value, value=action.value,
