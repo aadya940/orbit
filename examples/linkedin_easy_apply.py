@@ -3,7 +3,7 @@
 Orbit Example — LinkedIn Easy Apply Bot
 
 Automatically applies to jobs on LinkedIn using Easy Apply.
-Uses Orbit's composable verbs (Do, Read, Check, Navigate) as short-horizon
+Uses Orbit's composable verbs (do, read, check, navigate) as short-horizon
 tasks, with Python driving the state machine between them.
 
 Usage:
@@ -124,18 +124,11 @@ class WizardPageState(BaseModel):
 
 # Verb wrappers 
 async def do(s, task: str, max_steps=15, extra_info=None, verbose=True):
-    return await orbit.Do(
-        task, session=s, max_steps=max_steps,
-        verbose=verbose, planner=False, llm=LLM,
-        extra_info=extra_info,
-    ).run()
+    return await s.do(task, max_steps=max_steps, guidance=extra_info)
 
 
 async def read(s, task: str, schema, max_steps=15):
-    result = await orbit.Read(
-        task, schema=schema, session=s,
-        max_steps=max_steps, verbose=False, planner=False, llm=LLM,
-    ).run()
+    result = await s.read(task, schema=schema, max_steps=max_steps)
     return result.output
 
 
@@ -153,10 +146,7 @@ async def safe_read(s, task: str, schema, retries: int = 2, max_steps=15):
 
 
 async def check(s, condition: str) -> bool:
-    return await orbit.Check(
-        condition, session=s, max_steps=13,
-        verbose=False, planner=False, llm=LLM,
-    ).check()
+    return await s.check(condition, max_steps=13)
 
 
 # Helpers 
@@ -367,13 +357,10 @@ async def run(query: str, count: int, resume_path: str, applicant_info: str):
     consecutive_skips = 0
 
     # Single session for the entire run — no re-navigation between jobs.
-    async with orbit.session() as s:
+    async with orbit.session(llm=LLM) as s:
         # Navigate once
         print(f"\n  Navigating to: {query}")
-        await orbit.Navigate(
-            search_url, session=s, max_steps=15,
-            verbose=False, planner=False, llm=LLM,
-        ).run()
+        await s.navigate(search_url, max_steps=15)
 
         while applied < count:
             attempt = applied + skipped + 1

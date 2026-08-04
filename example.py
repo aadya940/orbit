@@ -1,121 +1,133 @@
-"""Orbit examples — showcasing the composable SDK API."""
+"""Orbit examples — the composable SDK API.
+
+Run one:
+    python example.py simple
+    python example.py extract
+    python example.py control_flow
+    python example.py cross_app
+    python example.py tools
+    python example.py custom_tool
+"""
 
 import asyncio
+import sys
+
 from dotenv import load_dotenv
-from orbit import Agent, RunResult, Do, Read, Check, Navigate, Fill, session
+from pydantic import BaseModel
+
+import orbit
+from orbit.tools import tool
 
 load_dotenv()
 
-#    Example 1: Simple agent
+LLM = "gemini/gemini-3.6-flash"
 
 
-async def example_simple():
-    """One-shot task — daemon starts and stops automatically."""
-    result: RunResult = await Agent(
-        task="Open Notepad, type 'Hello from Orbit!', save to Desktop as hello.txt, close Notepad.",
-        llm="gemini-3.1-flash-lite-preview",
-        max_steps=15,
-        verbose=True,
-    ).run()
+# 1. Simplest possible task ---------------------------------------------------
 
-    print(f"Status:  {result.status}")
-    print(f"Summary: {result.summary}")
-    if result.latency:
-        lat = result.latency
-        print(
-            f"Latency: {lat['total_sec']}s total, "
-            f"{lat.get('llm_calls', '?')}/{lat.get('max_llm_calls', '?')} LLM calls, "
-            f"{lat['tool_calls']} tool calls"
-        )
+async def simple():
+    """One instruction. The app opens, the work happens, the session cleans up."""
+    async with orbit.session(llm=LLM) as s:
+        result = await s.do("open the calculator and compute 7 times 8")
+        print(result.status, "in", result.steps_used, "steps")
 
 
-#    Example 2: Composable verbs with session
+# 2. Typed extraction ---------------------------------------------------------
+
+class Story(BaseModel):
+    title: str
+    points: int
 
 
-async def example_verbs():
-    async with session() as s:
-        # 1) End-to-end job discovery + open Easy Apply
-        await Do(
-            """
-            Go to linkedin.com/jobs.
+class FrontPage(BaseModel):
+    stories: list[Story]
 
-            Search for 'Software Engineering Intern'.
-            Enable the 'Easy Apply' filter.
 
-            If no Easy Apply jobs are visible, scroll until they appear.
-            If still not found, request_human.
+async def extract():
+    """`read` returns a validated Pydantic instance — or the run failed."""
+    async with orbit.session(llm=LLM) as s:
+        await s.navigate("https://news.ycombinator.com")
+        result = await s.read("the top 5 stories with title and points", schema=FrontPage)
 
-            Click the first job with an 'Easy Apply' badge.
-            Click the 'Easy Apply' button.
+        for story in result.output.stories:
+            print(f"{story.points:>4}  {story.title}")
 
-            STOP when the Easy Apply wizard is open.
-            """,
-            session=s,
-            verbose=True,
-            llm="gemini-3-flash-preview",
-        ).run()
 
-        # 2) Full application loop (single control block)
-        await Do(
-            """
-            Complete the Easy Apply flow end-to-end:
+# 3. Real control flow --------------------------------------------------------
 
-            - Upload RESUME.pdf (locate it via desktop tools, do not hardcode path)
-            - Fill all visible fields using the resume
-            - If a required field is unknown, request_human
-            - Progress using 'Next' as needed
+async def control_flow():
+    """`check` returns a real bool, so Python drives the branching."""
+    async with orbit.session(llm=LLM) as s:
+        await s.navigate("https://news.ycombinator.com")
 
-            Continue iterating through steps until:
-            - The 'Submit application' button is visible
-
-            Then:
-            - Click 'Submit application'
-            - STOP when a confirmation message appears
-
-            If the flow gets stuck at any step, try reasonable recovery (scroll, click Next, etc.)
-            before requesting human help.
-            """,
-            session=s,
-            verbose=True,
-            llm="gemini-3-flash-preview",
-        ).run()
-
-        # 3) Lightweight verification (optional, keep 1 gate max)
-        if await Check(
-            "A confirmation message like 'Application submitted' is visible",
-            session=s,
-            verbose=True,
-            llm="gemini-3-flash-preview",
-        ).check():
-            print("Applied Successfully!")
+        if await s.check("a login link is visible"):
+            print("not signed in")
         else:
-            print("Submission uncertain — manual check recommended.")
+            print("already signed in")
 
 
-#    Example 3: Custom domain agent
+# 4. One workflow across the browser and a desktop app ------------------------
 
-from orbit import BaseActionAgent
-from pydantic import BaseModel
-
-
-class ResumeData(BaseModel):
-    name: str
-    skills: list[str]
-    experience_years: int
+class Contributor(BaseModel):
+    username: str
 
 
-class ReadResume(Read):
-    def __init__(self, path: str, **kw):
-        super().__init__(f"read the resume at {path}", schema=ResumeData, **kw)
+async def cross_app():
+    """The web half and the desktop half of a job, in a single session."""
+    async with orbit.session(llm=LLM) as s:
+        await s.navigate("https://github.com/numpy/numpy/graphs/contributors")
+        await asyncio.sleep(3)  # the contributor graph renders late
+
+        top = await s.read("the 2nd-highest contributor's login handle", schema=Contributor)
+        user = top.output.username
+
+        # ...now leave the browser entirely
+        await s.navigate("gnome-text-editor")
+        await asyncio.sleep(2)
+        await s.do(f"type this into the document: numpy's #2 contributor is {user}")
+
+        print("wrote to the editor:", await s.check(f"the document contains {user}"))
 
 
-async def example_domain_agent():
-    async with session() as s:
-        result = await ReadResume("Desktop/RESUME.pdf", session=s).run()
-        print(result.output)  # ResumeData instance
+# 5. Tools alongside the screen ----------------------------------------------
+
+async def tools():
+    """Files, code, clipboard and web tools are available by default."""
+    async with orbit.session(llm=LLM) as s:
+        await s.navigate("https://news.ycombinator.com")
+        await s.do("read the top 5 stories and save them to /tmp/stories.csv")
+
+        print(open("/tmp/stories.csv").read())
 
 
-# if __name__ == "__main__":
-#     asyncio.run(example_verbs())
-#     asyncio.run(example_simple())
-#     asyncio.run(example_domain_agent())
+# 6. Your own tool ------------------------------------------------------------
+
+@tool("notify", "Show a desktop notification", {"message": {"type": "string"}})
+async def notify(message: str) -> str:
+    proc = await asyncio.create_subprocess_exec("notify-send", "Orbit", message)
+    await proc.wait()
+    return "notified"
+
+
+async def custom_tool():
+    """Register anything the agent should be able to do."""
+    async with orbit.session(llm=LLM, tools=[notify]) as s:
+        await s.navigate("https://news.ycombinator.com")
+        await s.do("read the top story and send me a desktop notification about it")
+
+
+EXAMPLES = {
+    "simple": simple,
+    "extract": extract,
+    "control_flow": control_flow,
+    "cross_app": cross_app,
+    "tools": tools,
+    "custom_tool": custom_tool,
+}
+
+if __name__ == "__main__":
+    name = sys.argv[1] if len(sys.argv) > 1 else "extract"
+    if name not in EXAMPLES:
+        print(f"unknown example {name!r}. choose from: {', '.join(EXAMPLES)}")
+        sys.exit(1)
+    asyncio.run(EXAMPLES[name]())

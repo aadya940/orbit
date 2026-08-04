@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head><title>Modal Ambush</title>
+<style>
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10}
+  .modal{background:#fff;padding:2rem;border-radius:8px;max-width:360px}
+  #pricing{display:none;padding:2rem;background:#eefbee}
+</style></head>
+<body>
+  <nav><a href="#" id="pricing-link">Pricing</a></nav>
+  <main><h1>Welcome</h1></main>
+  <section id="pricing"><h2>Pricing</h2><p>Free forever.</p></section>
+
+  <div class="overlay" id="newsletter" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2>Join our newsletter!</h2>
+      <input type="email" placeholder="you@example.com">
+      <button id="subscribe">Subscribe</button>
+      <button id="dismiss" aria-label="">✕</button>
+    </div>
+  </div>
+
+  <script>
+    // Pricing link is inert while the modal is open — clicking through the
+    // overlay must not count as success.
+    document.getElementById('dismiss').onclick = () =>
+      document.getElementById('newsletter').remove();
+    document.getElementById('pricing-link').onclick = (e) => {
+      e.preventDefault();
+      if (!document.getElementById('newsletter'))
+        document.getElementById('pricing').style.display = 'block';
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+# Parity benchmark task suite.
+#
+# Both Orbit v1 and v2 are scored on these tasks; v2 ships when its pass
+# rate meets or beats v1's frozen baseline. Each task declares a machine
+# -checkable success condition — no vibes-based grading.
+#
+# Tiers:
+#   friendly — well-labeled surfaces; both versions should pass
+#   hostile  — the cases that break naive agents (unlabeled buttons,
+#              modals, stale trees); where v2's verification/ladder must earn its keep
+#   desktop  — native + Electron surfaces via the accessibility tree
+
+- id: hn-read-titles
+  tier: friendly
+  surface: browser
+  task: "Read the titles of the top 5 stories"
+  start_url: "https://news.ycombinator.com"
+  success:
+    kind: schema_output
+    schema: StoryList
+    min_items: 5
+
+- id: wiki-navigate-search
+  tier: friendly
+  surface: browser
+  task: "Search Wikipedia for 'accessibility tree' and open the first result"
+  start_url: "https://en.wikipedia.org"
+  success:
+    kind: url_contains
+    value: "Accessibility"
+
+- id: httpbin-form-fill
+  tier: friendly
+  surface: browser
+  task: "Fill the customer name and telephone fields and submit the form"
+  start_url: "https://httpbin.org/forms/post"
+  success:
+    kind: url_contains
+    value: "/post"
+
+- id: modal-ambush
+  tier: hostile
+  surface: browser
+  task: "Dismiss the newsletter modal and click the pricing link"
+  fixture: fixtures/modal_ambush.html
+  success:
+    kind: check
+    condition: "the pricing section is visible and no modal is open"
+
+- id: unlabeled-icon-button
+  tier: hostile
+  surface: browser
+  task: "Open the settings panel (gear icon, no accessible label)"
+  fixture: fixtures/unlabeled_icons.html
+  success:
+    kind: check
+    condition: "the settings panel is open"
+
+- id: stale-tree-rerender
+  tier: hostile
+  surface: browser
+  task: "Click 'Continue' on a page that re-renders the button 500ms after load"
+  fixture: fixtures/rerender.html
+  success:
+    kind: check
+    condition: "the confirmation message is visible"
+
+- id: shadow-dom-form
+  tier: hostile
+  surface: browser
+  task: "Fill the email field inside the shadow-DOM web component and submit"
+  fixture: fixtures/shadow_form.html
+  success:
+    kind: check
+    condition: "the thank-you message is visible"
+
+- id: no-effect-click
+  tier: hostile
+  surface: browser
+  task: "Click the 'Save' button (a decoy disabled duplicate exists above the real one)"
+  fixture: fixtures/decoy_button.html
+  success:
+    kind: check
+    condition: "the saved indicator is visible"
+
+- id: desktop-launch-editor
+  tier: desktop
+  surface: native
+  task: "Open the system text editor and type 'hello orbit'"
+  success:
+    kind: check
+    condition: "a text editor window contains 'hello orbit'"
+
+- id: electron-cdp-attach
+  tier: desktop
+  surface: electron
+  task: "Attach to the Electron fixture app via CDP and click its counter button 3 times"
+  success:
+    kind: check
+    condition: "the counter shows 3"
