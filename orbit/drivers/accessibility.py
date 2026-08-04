@@ -1,18 +1,26 @@
-"""AccessibilityDriver — OS accessibility tree via the OculOS daemon.
+"""AccessibilityDriver, the OS accessibility tree via the OculOS daemon.
 
+Notes
+-----
 Transplanted from orbit v1:
-- OculOSClient: thin REST wrapper (orbit/_oculus_client/client.py)
-- OculOSDaemon: subprocess lifecycle + health-check retry loop
-  (orbit/daemon.py), including the Linux toolkit-accessibility fix that
-  makes Chrome expose its full AT-SPI tree
-- element interaction with stale-element re-find retry, browser-chrome
-  filtering, and multiline typing via keyboard (orbit/_tools/ui.py)
-- app launch with per-app accessibility flags (ui.py manage_window)
 
-No TTL cache: observe() always fetches fresh (the old 0.75s cache was
-deliberately dropped; event-driven invalidation is future work).
+* ``OculOSClient``: a thin REST wrapper, from
+  ``orbit/_oculus_client/client.py``.
+* ``OculOSDaemon``: subprocess lifecycle plus a health check retry loop,
+  from ``orbit/daemon.py``, including the Linux toolkit accessibility
+  fix that makes Chrome expose its full AT-SPI tree.
+* Element interaction with stale element re-find retry, browser chrome
+  filtering, and multiline typing via keyboard, from
+  ``orbit/_tools/ui.py``.
+* App launch with per-app accessibility flags, from ``ui.py
+  manage_window``.
 
-All heavy imports (requests, pyautogui) are lazy.
+There is no TTL cache: ``observe()`` always fetches fresh. The old 0.75
+second cache was deliberately dropped, and event driven invalidation is
+future work.
+
+All heavy imports (requests, pyautogui) are lazy, so the module can be
+imported on a machine with neither installed.
 """
 
 from __future__ import annotations
@@ -51,9 +59,18 @@ _DEFAULT_BASE_URL = "http://127.0.0.1:7878"
 def _default_binary_path() -> Path:
     """Locate the bundled OculOS binary.
 
-    Package-relative first (how it ships), then an installed sibling
-    package, then PATH — so a source checkout, a wheel install and a
-    system install all work without configuration.
+    Returns
+    -------
+    Path
+        Path to the binary. When nothing is found, the package relative
+        path is returned anyway so that the caller's existence check
+        produces a useful error message naming the expected location.
+
+    Notes
+    -----
+    The search order is package relative first (how it ships), then an
+    installed sibling package, then PATH. That way a source checkout, a
+    wheel install and a system install all work without configuration.
     """
     name = "oculos.exe" if os.name == "nt" else "oculos"
     package_bin = Path(__file__).resolve().parents[1] / "_bin" / name
@@ -68,8 +85,24 @@ def _default_binary_path() -> Path:
 
 
 def _kill_pid(pid: Optional[int]) -> None:
-    """SIGTERM then SIGKILL a real process id (fallback when the daemon's
-    window-close is unavailable, e.g. xdotool not installed)."""
+    """Terminate a process with SIGTERM, then SIGKILL.
+
+    Parameters
+    ----------
+    pid : int or None
+        The real process id to signal. None or zero is a no-op.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    This is the fallback for when the daemon's window close is
+    unavailable, for example when xdotool is not installed. Errors from
+    a process that has already exited, or that we may not signal, are
+    swallowed: teardown must never raise.
+    """
     if not pid:
         return
     import signal
@@ -84,22 +117,59 @@ def _kill_pid(pid: Optional[int]) -> None:
 class OculOSError(OrbitError):
     """Raised when the OculOS API returns an error.
 
-    Subclasses OrbitError so the fallback ladder treats daemon-side
-    failures as a failed rung to escalate past, not a run-killing crash.
+    Attributes
+    ----------
+    code : str
+        Stable error code, ``"oculos_error"``.
+
+    Notes
+    -----
+    This subclasses OrbitError so that the fallback ladder treats daemon
+    side failures as a failed rung to escalate past, rather than a run
+    killing crash.
     """
 
     code = "oculos_error"
 
 
 class OculOSClient:
-    """Thin wrapper around the OculOS REST API (localhost daemon)."""
+    """Thin wrapper around the OculOS REST API served by the localhost daemon.
+
+    Attributes
+    ----------
+    base_url : str
+        Base URL of the daemon, with any trailing slash removed.
+    """
 
     def __init__(self, base_url: str = _DEFAULT_BASE_URL, timeout: float = 30.0) -> None:
+        """Create a client bound to a daemon URL.
+
+        Parameters
+        ----------
+        base_url : str, optional
+            Daemon base URL. Default is the localhost default.
+        timeout : float, optional
+            Per request timeout in seconds. Default is 30.0.
+
+        Notes
+        -----
+        The underlying requests session is created lazily on first use,
+        so constructing a client neither imports requests nor opens a
+        connection.
+        """
         self.base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._session: Any = None
 
     def _get_session(self) -> Any:
+        """Return the requests session, creating it on first use.
+
+        Returns
+        -------
+        Any
+            A ``requests.Session`` reused for every call, so that
+            connections to the local daemon are kept alive.
+        """
         if self._session is None:
             import requests  # lazy
 
@@ -109,9 +179,39 @@ class OculOSClient:
     # -- discovery --
 
     def list_windows(self) -> List[dict]:
+        """List every window the daemon can see.
+
+        Returns
+        -------
+        List[dict]
+            Window descriptors, each carrying at least ``pid``,
+            ``exe_name``, ``title``, ``rect`` and visibility flags.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._get("/windows")
 
     def get_tree(self, pid: int) -> dict:
+        """Fetch the full accessibility tree for one window.
+
+        Parameters
+        ----------
+        pid : int
+            Process id of the target window.
+
+        Returns
+        -------
+        dict
+            The root node, with children nested under ``children``.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._get(f"/windows/{pid}/tree")
 
     def find_elements(
@@ -122,6 +222,35 @@ class OculOSClient:
         element_type: Optional[str] = None,
         interactive: Optional[bool] = None,
     ) -> List[dict]:
+        """Query the daemon for elements in one window.
+
+        Parameters
+        ----------
+        pid : int
+            Process id of the target window.
+        query : str, optional
+            Free text label query. Default is None, meaning unfiltered.
+        element_type : str, optional
+            Restrict results to one element type. Default is None.
+        interactive : bool, optional
+            Restrict results by the daemon's own notion of
+            interactivity. Default is None.
+
+        Returns
+        -------
+        List[dict]
+            Matching raw nodes.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+
+        Notes
+        -----
+        Only parameters that were explicitly supplied are sent, so the
+        daemon's own defaults apply to the rest.
+        """
         params: Dict[str, Any] = {}
         if query is not None:
             params["q"] = query
@@ -134,46 +263,276 @@ class OculOSClient:
     # -- window ops --
 
     def focus_window(self, pid: int) -> None:
+        """Bring a window to the foreground.
+
+        Parameters
+        ----------
+        pid : int
+            Process id of the target window.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         self._post(f"/windows/{pid}/focus")
 
     def close_window(self, pid: int) -> None:
+        """Ask a window to close gracefully.
+
+        Parameters
+        ----------
+        pid : int
+            Process id of the target window.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure, for example when no window
+            manager helper is available.
+        """
         self._post(f"/windows/{pid}/close")
 
     # -- element interactions --
 
     def click(self, element_id: str) -> dict:
+        """Click one element by its daemon-side id.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure, including when the id has
+            gone stale.
+        """
         return self._post(f"/interact/{element_id}/click")
 
     def set_text(self, element_id: str, text: str) -> dict:
+        """Replace an element's text through the accessibility text interface.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+        text : str
+            The new text value.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure, notably when the widget
+            does not implement the editable text interface at all.
+        """
         return self._post(f"/interact/{element_id}/set-text", json={"text": text})
 
     def send_keys(self, element_id: str, keys: str) -> dict:
+        """Send a key sequence to one element.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+        keys : str
+            The key sequence to send.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._post(f"/interact/{element_id}/send-keys", json={"keys": keys})
 
     def focus(self, element_id: str) -> dict:
+        """Give keyboard focus to one element.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._post(f"/interact/{element_id}/focus")
 
     def toggle(self, element_id: str) -> dict:
+        """Toggle a checkable element such as a checkbox.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._post(f"/interact/{element_id}/toggle")
 
     def expand(self, element_id: str) -> dict:
+        """Expand an expandable element such as a dropdown or tree node.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._post(f"/interact/{element_id}/expand")
 
     def select(self, element_id: str) -> dict:
+        """Select a selectable element such as a dropdown option.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._post(f"/interact/{element_id}/select")
 
     def scroll(self, element_id: str, direction: str) -> dict:
+        """Scroll one element in a direction.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+        direction : str
+            Scroll direction, for example ``"up"`` or ``"down"``.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._post(f"/interact/{element_id}/scroll", json={"direction": direction})
 
     def scroll_into_view(self, element_id: str) -> dict:
+        """Scroll one element into the visible area of its container.
+
+        Parameters
+        ----------
+        element_id : str
+            The element's ``oculos_id``.
+
+        Returns
+        -------
+        dict
+            The daemon's response payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         return self._post(f"/interact/{element_id}/scroll-into-view")
 
     def health(self) -> dict:
+        """Probe daemon liveness.
+
+        Returns
+        -------
+        dict
+            The daemon's health payload.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon responds but reports a failure.
+        """
         return self._get("/health")
 
     # -- internals --
 
     def _unwrap(self, r: Any) -> Any:
+        """Unwrap the daemon's envelope, raising on any reported failure.
+
+        Parameters
+        ----------
+        r : Any
+            The raw ``requests`` response.
+
+        Returns
+        -------
+        Any
+            The ``data`` field of a successful response.
+
+        Raises
+        ------
+        OculOSError
+            If the body is not JSON, or if the envelope reports
+            ``success`` as false.
+
+        Notes
+        -----
+        Converting transport level and daemon level failures into one
+        typed error here is what lets every caller treat a bad response
+        as an ordinary failed rung.
+        """
         try:
             body = r.json()
         except ValueError:
@@ -184,12 +543,50 @@ class OculOSClient:
         return body.get("data")
 
     def _get(self, path: str, params: Optional[dict] = None) -> Any:
+        """Issue a GET against the daemon and unwrap the envelope.
+
+        Parameters
+        ----------
+        path : str
+            Path appended to the base URL, beginning with a slash.
+        params : dict, optional
+            Query string parameters. Default is None.
+
+        Returns
+        -------
+        Any
+            The ``data`` field of a successful response.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         s = self._get_session()
         return self._unwrap(
             s.get(f"{self.base_url}{path}", params=params, timeout=self._timeout)
         )
 
     def _post(self, path: str, json: Optional[dict] = None) -> Any:
+        """Issue a POST against the daemon and unwrap the envelope.
+
+        Parameters
+        ----------
+        path : str
+            Path appended to the base URL, beginning with a slash.
+        json : dict, optional
+            JSON body to send. Default is None.
+
+        Returns
+        -------
+        Any
+            The ``data`` field of a successful response.
+
+        Raises
+        ------
+        OculOSError
+            If the daemon reports a failure.
+        """
         s = self._get_session()
         return self._unwrap(
             s.post(f"{self.base_url}{path}", json=json, timeout=self._timeout)
@@ -197,19 +594,68 @@ class OculOSClient:
 
 
 class OculOSDaemon:
-    """Manages the OculOS background daemon subprocess."""
+    """Manage the OculOS background daemon subprocess.
+
+    Attributes
+    ----------
+    binary_path : Path
+        Resolved path to the daemon executable.
+    base_url : str
+        URL the daemon is expected to serve on.
+    process : subprocess.Popen or None
+        The running daemon process, or None when not started.
+    """
 
     def __init__(
         self,
         binary_path: Optional[str] = None,
         base_url: str = _DEFAULT_BASE_URL,
     ) -> None:
+        """Prepare daemon management, without starting anything yet.
+
+        Parameters
+        ----------
+        binary_path : str, optional
+            Explicit path to the daemon binary. Default is None, which
+            falls back to the bundled binary lookup.
+        base_url : str, optional
+            URL the daemon will serve on. Default is the localhost
+            default.
+
+        Notes
+        -----
+        ``stop`` is registered with ``atexit`` at construction so that a
+        daemon started during a run is torn down even if the caller
+        never reaches an explicit shutdown.
+        """
         self.binary_path = Path(binary_path).resolve() if binary_path else _default_binary_path()
         self.base_url = base_url
         self.process: Optional[subprocess.Popen] = None
         atexit.register(self.stop)
 
     async def start(self) -> None:
+        """Launch the daemon subprocess and wait for it to report healthy.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        FileNotFoundError
+            If the daemon binary does not exist at the resolved path.
+        TimeoutError
+            If the daemon does not answer its health endpoint in time.
+
+        Notes
+        -----
+        On Linux the GNOME ``toolkit-accessibility`` setting is enabled
+        first, because without it apps such as Chrome expose only about
+        five top level AT-SPI elements instead of their full tree. Every
+        failure mode of that call (gsettings absent, hanging, or
+        erroring on a non-GNOME desktop) is tolerated, since it is an
+        optimisation and not a precondition.
+        """
         if not self.binary_path.exists():
             raise FileNotFoundError(f"OculOS binary not found at: {self.binary_path}")
 
@@ -225,7 +671,7 @@ class OculOSDaemon:
                     timeout=5,
                 )
             except FileNotFoundError:
-                log.debug("gsettings not found — skipping toolkit-accessibility check")
+                log.debug("gsettings not found, skipping toolkit-accessibility check")
             except subprocess.TimeoutExpired:
                 log.warning("gsettings timed out setting toolkit-accessibility")
             except Exception as exc:
@@ -241,7 +687,31 @@ class OculOSDaemon:
         await self._wait_for_health(timeout_seconds=5.0)
 
     async def _wait_for_health(self, timeout_seconds: float = 5.0) -> None:
-        """Poll /health until the daemon is ready; yield between polls."""
+        """Poll the health endpoint until the daemon is ready.
+
+        Parameters
+        ----------
+        timeout_seconds : float, optional
+            How long to keep polling before giving up. Default is 5.0.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TimeoutError
+            If the daemon never answers within the timeout. The
+            subprocess is stopped first so a half started daemon is not
+            left behind.
+
+        Notes
+        -----
+        The loop awaits between polls rather than sleeping the thread,
+        so that starting the daemon does not block the event loop.
+        Connection errors are expected while the daemon is still binding
+        its port and are ignored.
+        """
         import requests  # lazy
 
         start = time.time()
@@ -258,6 +728,19 @@ class OculOSDaemon:
         raise TimeoutError("OculOS daemon failed to start within the timeout period")
 
     def stop(self) -> None:
+        """Terminate the daemon subprocess if it is still running.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Termination is graceful first, escalating to a kill after a
+        short wait, so a daemon wedged mid request still goes away.
+        Calling this on an already stopped daemon is a no-op, which
+        matters because it is also registered with ``atexit``.
+        """
         if self.process and self.process.poll() is None:
             self.process.terminate()
             try:
@@ -267,8 +750,8 @@ class OculOSDaemon:
             log.info("OculOS daemon stopped")
 
 
-# Elements that belong to browser chrome (address bar, tabs, bookmarks) —
-# transplanted marker list from ui.py; we never target these by accident.
+# Elements that belong to browser chrome (address bar, tabs, bookmarks).
+# Transplanted marker list from ui.py; we never target these by accident.
 _BROWSER_CHROME_MARKERS = (
     "address and search bar", "search or enter url",
     "search google or type a url", "omnibox",
@@ -282,6 +765,27 @@ _CHROMIUM_BASED = ("chrome", "chromium", "electron", "vscode", "code",
 
 
 def _launch_flags(name: str) -> tuple:
+    """Choose command line flags and environment for launching an app.
+
+    Parameters
+    ----------
+    name : str
+        The application command or display name being launched.
+
+    Returns
+    -------
+    tuple
+        A ``(flags, env_vars)`` pair: a flag string to append to the
+        command line, and a mapping to overlay on the environment.
+        Either may be empty for apps needing no special treatment.
+
+    Notes
+    -----
+    Chromium based apps expose no useful accessibility tree unless
+    renderer accessibility is forced on at launch, while Firefox needs
+    the GTK accessibility bridge modules enabled through the
+    environment instead.
+    """
     lname = name.lower()
     if any(n in lname for n in _CHROMIUM_BASED):
         return ("--force-renderer-accessibility --enable-accessibility "
@@ -292,13 +796,40 @@ def _launch_flags(name: str) -> tuple:
 
 
 def _node_to_element(node: dict, pid: int, path: str) -> Element:
+    """Convert one raw OculOS tree node into an Element.
+
+    Parameters
+    ----------
+    node : dict
+        The raw node as returned by the daemon.
+    pid : int
+        Process id of the window the node belongs to, stored in the
+        element ref.
+    path : str
+        Dotted index path of the node within the tree, stored in the
+        element ref for debugging.
+
+    Returns
+    -------
+    Element
+        The converted element, carrying TREE provenance and a ref that
+        can be used to interact with the node later.
+
+    Notes
+    -----
+    The AT-SPI ``enabled`` flag is unreliable on GTK: a live GNOME
+    Calculator reports plainly clickable buttons as disabled. It is only
+    trusted when the node is also not keyboard focusable, meaning two
+    independent signals agree the node is inert. Treating a false
+    reading as authoritative would make whole apps appear unusable.
+    """
     # OculOS node schema (verified live): type, label, value, text_content,
     # rect, enabled, focused, is_keyboard_focusable, oculos_id, actions.
     rect = node.get("rect") or {}
     name = node.get("label") or node.get("title") or node.get("name") or ""
     # AT-SPI 'enabled' is unreliable on GTK (live GNOME Calculator reports
     # clickable buttons as enabled=false). Trust a False only when the node
-    # is also not keyboard-focusable — i.e. two signals agree it's inert.
+    # is also not keyboard-focusable, i.e. two signals agree it's inert.
     enabled = True
     if node.get("enabled") is False and not node.get("is_keyboard_focusable", False):
         enabled = False
@@ -320,7 +851,20 @@ def _node_to_element(node: dict, pid: int, path: str) -> Element:
 
 
 class AccessibilityDriver:
-    """Driver over the OS accessibility tree (OculOS daemon)."""
+    """Driver over the OS accessibility tree, served by the OculOS daemon.
+
+    Attributes
+    ----------
+    name : str
+        Driver id, ``"tree"``.
+    surface : str
+        ``"native"``, so the ladder never uses this driver as a rung for
+        a web task.
+    client : OculOSClient
+        REST client bound to the daemon.
+    daemon : OculOSDaemon
+        Subprocess manager for the daemon.
+    """
 
     name = "tree"
     surface = "native"
@@ -333,6 +877,30 @@ class AccessibilityDriver:
         auto_start_daemon: bool = True,
         close_launched: bool = True,
     ) -> None:
+        """Create the driver without contacting the daemon.
+
+        Parameters
+        ----------
+        base_url : str, optional
+            Daemon base URL. Default is the localhost default.
+        binary_path : str, optional
+            Explicit path to the daemon binary. Default is None, which
+            uses the bundled binary lookup.
+        auto_start_daemon : bool, optional
+            Whether to launch the daemon when it is not already
+            reachable. Default is True.
+        close_launched : bool, optional
+            Whether apps launched through this driver are closed on
+            stop. Default is True.
+
+        Notes
+        -----
+        Exe names launched via navigate are tracked separately from the
+        launcher processes, because killing the launcher is useless for
+        D-Bus activated GNOME apps: those hand off to a session service
+        and exit immediately, leaving the real window owned by another
+        process entirely.
+        """
         self.client = OculOSClient(base_url=base_url)
         self.daemon = OculOSDaemon(binary_path=binary_path, base_url=base_url)
         self._auto_start_daemon = auto_start_daemon
@@ -350,7 +918,27 @@ class AccessibilityDriver:
     # -- lifecycle ----------------------------------------------------------
 
     async def start(self) -> None:
-        """Ensure the daemon is reachable, launching it if allowed."""
+        """Ensure the daemon is reachable, launching it if allowed.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the daemon is unreachable and auto start is disabled.
+        FileNotFoundError
+            If auto start is enabled but the binary is missing.
+        TimeoutError
+            If the launched daemon never becomes healthy.
+
+        Notes
+        -----
+        A health probe comes first, so an already running daemon (for
+        example one shared with another session) is reused rather than
+        duplicated. The call is idempotent once started.
+        """
         if self._started:
             return
         try:
@@ -368,10 +956,25 @@ class AccessibilityDriver:
         self._started = True
 
     async def stop(self) -> None:
+        """Close launched apps and shut the daemon down.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Windows are matched back to launched apps by executable name,
+        because the launcher process is useless for D-Bus activated
+        apps. A graceful window close through the daemon is preferred,
+        falling back to signalling the real process the daemon reports
+        when no window manager helper is available. Every step swallows
+        its errors: teardown must not raise and leave a daemon running.
+        """
         if self._close_launched and self._launched_exes:
             # Find the real PIDs of windows we launched (the launcher Popen
             # is useless for D-Bus-activated apps). Prefer a graceful window
-            # -close via the daemon; if that's unavailable (e.g. no xdotool),
+            # close via the daemon; if that's unavailable (e.g. no xdotool),
             # signal the actual process the daemon reports.
             try:
                 for w in self.client.list_windows():
@@ -406,6 +1009,31 @@ class AccessibilityDriver:
     }
 
     def _focused_window(self) -> dict:
+        """Pick the window this driver should be perceiving and acting on.
+
+        Returns
+        -------
+        dict
+            The chosen window descriptor.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If windows cannot be listed, or if no visible application
+            window remains after filtering.
+
+        Notes
+        -----
+        Compositor and desktop shell processes are excluded first. Their
+        AT-SPI trees describe the whole desktop's plumbing, thousands of
+        generic Wayland surface nodes, and never the app the user cares
+        about.
+
+        Among the survivors, an app this driver launched wins outright,
+        so a freshly opened app is targeted rather than whatever the
+        window list happens to lead with. Failing that, an explicitly
+        focused window is used, and only then the first real app window.
+        """
         try:
             windows = self.client.list_windows()
         except Exception as exc:
@@ -431,12 +1059,56 @@ class AccessibilityDriver:
 
     @staticmethod
     def _flatten(node: dict, pid: int, out: List[Element], path: str = "0") -> None:
+        """Walk a tree node depth first, appending converted elements.
+
+        Parameters
+        ----------
+        node : dict
+            The raw node to walk.
+        pid : int
+            Process id of the owning window.
+        out : List[Element]
+            Accumulator appended to in place, in document order.
+        path : str, optional
+            Dotted index path of this node. Default is ``"0"`` for the
+            root.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Nodes without an ``oculos_id`` are traversed but not emitted:
+        they cannot be interacted with, so listing them would only pad
+        the observation. Document order is preserved because refs into
+        this list are how elements are later addressed.
+        """
         if node.get("oculos_id"):
             out.append(_node_to_element(node, pid, path))
         for i, child in enumerate(node.get("children") or []):
             AccessibilityDriver._flatten(child, pid, out, f"{path}.{i}")
 
     def _window_rect(self, pid: int) -> Optional[Dict[str, float]]:
+        """Look up the screen rectangle of one window.
+
+        Parameters
+        ----------
+        pid : int
+            Process id of the target window.
+
+        Returns
+        -------
+        Dict[str, float] or None
+            The window rect, or None when the window is unknown or the
+            daemon cannot be reached.
+
+        Notes
+        -----
+        Failures return None rather than raising, because the only
+        caller uses this for an optional sanity check that should be
+        skipped, not failed, when the rect is unavailable.
+        """
         try:
             for w in self.client.list_windows():
                 if w.get("pid") == pid:
@@ -447,13 +1119,55 @@ class AccessibilityDriver:
 
     @staticmethod
     def _is_browser_chrome(el: Element) -> bool:
+        """Report whether an element looks like browser chrome, not page content.
+
+        Parameters
+        ----------
+        el : Element
+            The element to classify.
+
+        Returns
+        -------
+        bool
+            True if the element's name, value or role matches a known
+            browser chrome marker.
+
+        Notes
+        -----
+        Name, value and role are all searched because the same control
+        surfaces under different fields across toolkits.
+        """
         text = f"{el.name} {el.value or ''} {el.role}".lower()
         return any(marker in text for marker in _BROWSER_CHROME_MARKERS)
 
     def _check_bounds_sanity(self, el: Element, pid: int) -> None:
-        """Coordinate sanity before pointer actions: element must sit inside
-        the window rect, else the tree is stale/lying — raise rather than
-        click a phantom location."""
+        """Check an element's coordinates before acting on it.
+
+        Parameters
+        ----------
+        el : Element
+            The element about to be acted on.
+        pid : int
+            Process id of the window it belongs to.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TargetObstructed
+            If the element's bounds fall outside its own window rect.
+
+        Notes
+        -----
+        An element must sit inside the window rect. When it does not,
+        the tree is stale or lying, and acting anyway would click a
+        phantom location, possibly in a completely different
+        application. Raising is strictly better than a mystery click.
+        The check is skipped when either the element bounds or the
+        window rect are unavailable, since it can prove nothing then.
+        """
         if el.bounds is None:
             return
         rect = self._window_rect(pid)
@@ -472,15 +1186,52 @@ class AccessibilityDriver:
             )
 
     def _resolve(self, description: str, pid: int, _retry: bool = True) -> Element:
-        """Find the best interactive node matching the description.
+        """Find the best node in a window matching a description.
 
-        Tries the daemon-side query first (exact then lowercase — the old
-        wait_for_element heuristic), then falls back to fuzzy ranking over
-        the full interactive set."""
+        Parameters
+        ----------
+        description : str
+            Natural-language target description.
+        pid : int
+            Process id of the window to search.
+        _retry : bool, optional
+            Internal flag controlling the single settle-and-refetch
+            retry. Default is True; the recursive call passes False.
+
+        Returns
+        -------
+        Element
+            The best matching element.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the tree cannot be fetched, or comes back empty.
+        TargetNotFound
+            If nothing matches, with the closest labels attached as
+            suggestions.
+
+        Notes
+        -----
+        The full flattened tree is ranked with our own matcher rather
+        than the daemon's search. Verified live: the daemon's query
+        search misses exact label matches, and its ``interactive=True``
+        filter excludes GTK buttons entirely because they expose no
+        click action. The tree endpoint is the only honest source.
+
+        Browser chrome is filtered out unless nothing else matches. The
+        address bar's AT-SPI position shifts with focus state and can
+        otherwise shadow real page content.
+
+        A single retry after a short pause handles a GTK behaviour
+        verified live: the tree fetched immediately after an action is
+        partial while the toolkit rebuilds it, producing an alternating
+        hit and miss pattern. One fresh fetch after a beat fixes it.
+        """
         # Rank the full flattened tree with our own matcher. Verified live:
         # the daemon's query search misses exact label matches, and its
         # interactive=True filter excludes GTK buttons entirely (they expose
-        # no 'click' action) — the tree endpoint is the only honest source.
+        # no 'click' action). The tree endpoint is the only honest source.
         try:
             tree = self.client.get_tree(pid)
         except Exception as exc:
@@ -517,6 +1268,28 @@ class AccessibilityDriver:
     # -- Driver protocol ----------------------------------------------------
 
     async def observe(self) -> Observation:
+        """Capture the focused native window's accessibility tree.
+
+        Returns
+        -------
+        Observation
+            A native observation carrying every addressable element in
+            document order, plus modal count and focused element key.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the daemon is unreachable, no application window is
+            visible, or the tree cannot be fetched.
+
+        Notes
+        -----
+        The flattened element list is cached so that a later act can
+        address an element by ref. The model points at the index it was
+        shown, and returning that exact element avoids re-matching by
+        name, which can silently land on a different control when
+        several share a label.
+        """
         await self.start()
         window = self._focused_window()
         pid = int(window.get("pid", 0))
@@ -545,11 +1318,60 @@ class AccessibilityDriver:
 
     @staticmethod
     def can_navigate(target: Optional[str]) -> bool:
-        """This driver launches applications: any non-empty target the dom
-        driver doesn't claim as a web address."""
+        """Report whether this driver claims a navigate target.
+
+        Parameters
+        ----------
+        target : str or None
+            The navigate target to classify.
+
+        Returns
+        -------
+        bool
+            True for any non-empty target that the dom driver does not
+            claim as a web address.
+
+        Notes
+        -----
+        This driver launches applications, so it takes exactly the
+        complement of the web targets. Both sides route by the single
+        shared :func:`is_web_target` definition, which keeps the split
+        exhaustive and non-overlapping.
+        """
         return bool(target and target.strip()) and not is_web_target(target)
 
     async def act(self, action: Action) -> Optional[Element]:
+        """Resolve a target in the focused window and act on it.
+
+        Parameters
+        ----------
+        action : Action
+            The action to perform.
+
+        Returns
+        -------
+        Element or None
+            The element acted on, or None for NAVIGATE, PRESS and
+            untargeted SCROLL.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the daemon is unreachable or the tree cannot be read.
+        TargetNotFound
+            If a required value is missing, the target cannot be
+            resolved, or the action kind is unsupported.
+        TargetObstructed
+            If the element is disabled, its bounds are implausible, or
+            the interaction fails at the toolkit level.
+
+        Notes
+        -----
+        A ref is preferred over a target description wherever one is
+        supplied, so the element the model was shown is the element
+        acted on. FILL is special cased to fall back to the editable
+        widget itself when the description matches nothing.
+        """
         await self.start()
 
         if action.kind is ActionKind.NAVIGATE:
@@ -609,26 +1431,94 @@ class AccessibilityDriver:
     }
 
     def _is_editable_text(self, el: Element) -> bool:
+        """Report whether an element is an editable text widget.
+
+        Parameters
+        ----------
+        el : Element
+            The element to classify.
+
+        Returns
+        -------
+        bool
+            True if the element's role is one of the known editable text
+            roles across AT-SPI and UIA toolkits.
+        """
         return el.role.lower() in self._EDITABLE_ROLES
 
     def _by_ref(self, ref: Optional[int]) -> Optional[Element]:
-        """Element the model pointed at, from the last rendered observation."""
+        """Look up the element the model pointed at by observation index.
+
+        Parameters
+        ----------
+        ref : int or None
+            Index into the last rendered observation, or None when the
+            action carried no ref.
+
+        Returns
+        -------
+        Element or None
+            The referenced element, or None when ``ref`` is None.
+
+        Raises
+        ------
+        TargetNotFound
+            If the ref is out of range for the last observation, which
+            means the caller is working from a stale view and should
+            observe again.
+
+        Notes
+        -----
+        Addressing by ref rather than re-matching by name is what makes
+        acting deterministic: the index identifies exactly the element
+        that was rendered, even when several controls share a label or
+        the tree has since been rebuilt with different wording.
+        """
         if ref is None:
             return None
         if 0 <= ref < len(self._last_elements):
             return self._last_elements[ref]
         raise TargetNotFound(
             f"ref {ref} is out of range (observation had "
-            f"{len(self._last_elements)} elements) — observe again",
+            f"{len(self._last_elements)} elements), observe again",
             target=str(ref),
         )
 
     def _resolve_editable(self, description: Optional[str], pid: int) -> Element:
-        """Resolve a fill target. Try the named description first, but fall
-        back to the editable text widget itself — a document/entry field
-        often has an empty accessible name, so requiring a name match makes
-        the one thing you obviously want to type into unhittable. Prefer the
-        focused editable, else the largest one."""
+        """Resolve the element a fill should type into.
+
+        Parameters
+        ----------
+        description : str or None
+            Natural-language description of the field, or None when the
+            caller did not name one.
+        pid : int
+            Process id of the window to search.
+
+        Returns
+        -------
+        Element
+            The chosen editable text element.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the tree cannot be fetched.
+        TargetNotFound
+            If the window contains no enabled editable text widget.
+
+        Notes
+        -----
+        The named description is tried first, but resolution falls back
+        to the editable text widget itself. A document or entry field
+        very often has an empty accessible name, so requiring a name
+        match would make the one thing you obviously want to type into
+        unhittable.
+
+        Among candidates, the focused editable wins, and otherwise the
+        largest by area, which reliably picks the main editing surface
+        over incidental entry boxes.
+        """
         if description:
             try:
                 return self._resolve(description, pid)
@@ -649,6 +1539,19 @@ class AccessibilityDriver:
             )
 
         def area(e: Element) -> float:
+            """Compute an element's screen area for ranking.
+
+            Parameters
+            ----------
+            e : Element
+                The element to measure.
+
+            Returns
+            -------
+            float
+                Width times height, or 0.0 when the element has no
+                bounds.
+            """
             b = e.bounds
             return (b.width * b.height) if b else 0.0
 
@@ -663,6 +1566,20 @@ class AccessibilityDriver:
         raise TargetNotFound(f"unsupported action kind: {action.kind}")
 
     async def screenshot(self) -> Optional[bytes]:
+        """Capture the screen as PNG bytes.
+
+        Returns
+        -------
+        bytes or None
+            PNG bytes, or None when no screenshot backend is available.
+
+        Notes
+        -----
+        Every failure is swallowed and reported as None, because the
+        protocol treats a missing screenshot as an absence rather than
+        an error. A native surface is captured from the screen, since
+        the accessibility tree exposes no bitmap of its own.
+        """
         try:
             import io
 
@@ -678,8 +1595,45 @@ class AccessibilityDriver:
     # -- action internals ---------------------------------------------------
 
     def _do_with_stale_retry(self, action: Action, el: Element, pid: int, fn: Any) -> None:
-        """Perform fn(element_id); on failure re-find (stale a11y node) and
-        retry once — transplanted from interact_with_element."""
+        """Perform an interaction, re-finding the node once if it went stale.
+
+        Parameters
+        ----------
+        action : Action
+            The originating action, used for its target description when
+            re-finding.
+        el : Element
+            The element to act on first.
+        pid : int
+            Process id of the owning window.
+        fn : Any
+            Callable taking an element id and performing the
+            interaction.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TargetNotFound
+            If re-finding the element fails.
+        TargetObstructed
+            If the interaction still fails after the retry, carrying the
+            first error for context.
+
+        Notes
+        -----
+        Transplanted from ``interact_with_element``. Accessibility node
+        ids go stale whenever the toolkit rebuilds its tree, so a single
+        re-find and retry converts a common transient failure into a
+        success.
+
+        Specific transient COM error codes are retried against the same
+        id first, because on Windows UIA they indicate a momentary
+        server hiccup rather than a genuinely stale node, and re-finding
+        would be wasted work.
+        """
         eid = str(el.ref.get("node_id"))
         try:
             fn(eid)
@@ -706,9 +1660,43 @@ class AccessibilityDriver:
                 ) from exc3
 
     def _type_into(self, el: Element, pid: int, action: Action) -> None:
-        """set_text with the multiline heuristic from ui.py type_into:
-        AT-SPI SetValue cannot insert mid-string newlines, so multiline
-        values need real keyboard simulation."""
+        """Enter text into an element, choosing a strategy by content and widget.
+
+        Parameters
+        ----------
+        el : Element
+            The element to type into.
+        pid : int
+            Process id of the owning window.
+        action : Action
+            The originating action, whose value supplies the text.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TargetObstructed
+            If the widget supports neither accessibility text entry nor
+            the keyboard fallback.
+        TargetNotFound
+            If re-finding a stale element fails.
+
+        Notes
+        -----
+        The multiline heuristic comes from ``ui.py type_into``: AT-SPI
+        SetValue cannot insert mid-string newlines, so multiline values
+        need real keyboard simulation, and trailing newlines must be
+        pressed separately even for otherwise single line values.
+
+        Not every editable widget implements the AT-SPI EditableText
+        interface. Verified live, GtkSourceView in gnome-text-editor
+        raises UnknownMethod. In that case the driver falls back to
+        focusing the widget and typing with real key events, which is
+        exactly what a human does and works regardless of which
+        interfaces the toolkit chose to implement.
+        """
         text = str(action.value)
         stripped = text.rstrip("\n")
         trailing = len(text) - len(stripped)
@@ -744,11 +1732,36 @@ class AccessibilityDriver:
                 # Not every editable widget implements AT-SPI EditableText
                 # (verified live: GtkSourceView in gnome-text-editor raises
                 # UnknownMethod). Fall back to focusing it and typing for
-                # real — the same thing a human does.
+                # real, the same thing a human does.
                 self._type_by_keyboard(el, text)
 
     def _type_by_keyboard(self, el: Element, text: str) -> None:
-        """Focus the element and type with real key events."""
+        """Focus an element and type into it with real key events.
+
+        Parameters
+        ----------
+        el : Element
+            The element to focus and type into.
+        text : str
+            The text to type.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TargetObstructed
+            If pyautogui is unavailable, leaving no way to type.
+
+        Notes
+        -----
+        Focus is attempted first and click second, because clicking can
+        have side effects such as repositioning a caret or activating a
+        control, and is only worth risking when the direct focus call
+        does not take. A short pause after focusing lets the toolkit
+        settle before keystrokes arrive, which otherwise get dropped.
+        """
         pyautogui = self._try_pyautogui()
         if pyautogui is None:
             raise TargetObstructed(
@@ -767,7 +1780,36 @@ class AccessibilityDriver:
         pyautogui.typewrite(text, interval=0.02)
 
     def _select_option(self, el: Element, pid: int, action: Action) -> Element:
-        """Expand the dropdown, then find and select the option node."""
+        """Expand a dropdown, then find and select the requested option.
+
+        Parameters
+        ----------
+        el : Element
+            The dropdown element.
+        pid : int
+            Process id of the owning window.
+        action : Action
+            The originating action, whose value names the option.
+
+        Returns
+        -------
+        Element
+            The option element that was selected.
+
+        Raises
+        ------
+        TargetNotFound
+            If no option matches the requested value, with the
+            available options attached as suggestions.
+
+        Notes
+        -----
+        Expand is tried before click because it is the semantically
+        correct action, with click as a fallback for toolkits that only
+        open on pointer input. The options are then ranked with the
+        shared fuzzy matcher, and selection falls back to clicking for
+        widgets that do not implement the selection interface.
+        """
         eid = str(el.ref.get("node_id"))
         try:
             self.client.expand(eid)
@@ -797,7 +1839,37 @@ class AccessibilityDriver:
         return opt
 
     def _launch_app(self, app_name: str) -> None:
-        """Launch an app with accessibility flags (from ui.py manage_window)."""
+        """Launch an application with accessibility flags applied.
+
+        Parameters
+        ----------
+        app_name : str
+            Executable name or path to launch, optionally with
+            arguments.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TargetNotFound
+            If no app name was supplied, or the executable cannot be
+            launched.
+
+        Notes
+        -----
+        Transplanted from ``ui.py manage_window``. The launched
+        executable name is remembered so that subsequent observations
+        target this app's window rather than whatever the window list
+        happens to lead with.
+
+        On Linux the command is never run through a shell. A display
+        name such as "Text Editor" would shell-split into a bogus
+        command, reporting something like "Text: not found", and fail
+        silently. Splitting the argument vector explicitly turns that
+        into a real, catchable launch error with an actionable message.
+        """
         if not app_name:
             raise TargetNotFound("navigate requires an app name in action.value")
         # Remember what we launched so observation targets this app's
@@ -832,10 +1904,27 @@ class AccessibilityDriver:
                 ) from exc
 
     def _press_keys(self, chord: str) -> None:
+        """Send a key chord to whatever currently has focus.
+
+        Parameters
+        ----------
+        chord : str
+            Key chord, with modifiers separated by plus signs, for
+            example ``"ctrl+s"``.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TargetObstructed
+            If pyautogui is unavailable.
+        """
         pyautogui = self._try_pyautogui()
         if pyautogui is None:
             raise TargetObstructed(
-                "pyautogui unavailable — cannot send raw keys",
+                "pyautogui unavailable, cannot send raw keys",
                 reason="no_keyboard_backend",
             )
         keys = [k.strip().lower() for k in chord.split("+") if k.strip()]
@@ -845,10 +1934,32 @@ class AccessibilityDriver:
             pyautogui.press(keys[0])
 
     def _scroll_fallback(self, direction: str) -> None:
+        """Scroll the focused window when no target element was named.
+
+        Parameters
+        ----------
+        direction : str
+            Either ``"up"`` or anything else, which is treated as down.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        TargetObstructed
+            If pyautogui is unavailable.
+
+        Notes
+        -----
+        Without a target element there is no node to scroll into view,
+        so this falls back to a wheel event at the current pointer
+        position.
+        """
         pyautogui = self._try_pyautogui()
         if pyautogui is None:
             raise TargetObstructed(
-                "pyautogui unavailable — cannot scroll without a target",
+                "pyautogui unavailable, cannot scroll without a target",
                 reason="no_pointer_backend",
             )
         amount = 300 if direction.lower() == "up" else -300
@@ -856,6 +1967,20 @@ class AccessibilityDriver:
 
     @staticmethod
     def _try_pyautogui() -> Any:
+        """Import pyautogui, returning None instead of raising.
+
+        Returns
+        -------
+        Any
+            The ``pyautogui`` module, or None if it is unavailable.
+
+        Notes
+        -----
+        Every exception is caught, not just ImportError, because on
+        Linux the import itself opens an X display and fails when
+        headless. Callers decide what an absent keyboard backend means
+        for them, so this reports absence rather than erroring.
+        """
         try:
             import pyautogui  # lazy
 

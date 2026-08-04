@@ -1,4 +1,4 @@
-"""Orbit examples — the composable SDK API.
+"""Orbit examples: the composable SDK API.
 
 Run one:
     python example.py simple
@@ -44,7 +44,7 @@ class FrontPage(BaseModel):
 
 
 async def extract():
-    """`read` returns a validated Pydantic instance — or the run failed."""
+    """`read` returns a validated Pydantic instance, or the run failed."""
     async with orbit.session(llm=LLM) as s:
         await s.navigate("https://news.ycombinator.com")
         result = await s.read("the top 5 stories with title and points", schema=FrontPage)

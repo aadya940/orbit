@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Orbit Example — LinkedIn Easy Apply Bot
+Orbit Example: LinkedIn Easy Apply Bot
 
 Automatically applies to jobs on LinkedIn using Easy Apply.
 Uses Orbit's composable verbs (do, read, check, navigate) as short-horizon
@@ -11,7 +11,7 @@ Usage:
     python linkedin_easy_apply.py --query "ML Engineer" --count 5 --resume resume.pdf --applicant profile.txt
 
 The --applicant flag points to a text file with your info (one "- Key: Value" per line).
-If omitted, a built-in placeholder profile is used — edit DEFAULT_APPLICANT_INFO below.
+If omitted, a built-in placeholder profile is used, edit DEFAULT_APPLICANT_INFO below.
 """
 
 from dotenv import load_dotenv
@@ -59,14 +59,14 @@ DEFAULT_APPLICANT_INFO = """\
 # Exceptions 
 
 class SkipJob(Exception):
-    """Permanent skip — job is ineligible."""
+    """Permanent skip, job is ineligible."""
 
 
 class RetryJob(Exception):
-    """Transient failure — retry without incrementing skipped."""
+    """Transient failure, retry without incrementing skipped."""
 
 
-# Pydantic schemas (flat — cheap to read) 
+# Pydantic schemas (flat, cheap to read) 
 
 class JobPanelState(BaseModel):
     """State after clicking a job in the left list."""
@@ -177,12 +177,12 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
         "In the LEFT jobs list, click the TITLE text of a job that "
         "does NOT show 'Applied'. If all visible jobs show 'Applied', "
         "press PageDown to scroll and find one. "
-        "Only click the title text — not any button.",
+        "Only click the title text, not any button.",
         max_steps=15,
     )
 
     panel: Optional[JobPanelState] = await safe_read(s,
-        "the right job detail panel — title, company, and available buttons",
+        "the right job detail panel, title, company, and available buttons",
         schema=JobPanelState,
     )
     if panel is None:
@@ -203,7 +203,7 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
     )
 
     modal: Optional[ModalState] = await safe_read(s,
-        "the current screen — is an Easy Apply modal open?",
+        "the current screen, is an Easy Apply modal open?",
         schema=ModalState,
     )
     if modal is None:
@@ -227,7 +227,7 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
 
     for page_num in range(MAX_PAGES):
         page: Optional[WizardPageState] = await safe_read(s,
-            "the current Easy Apply wizard page — what buttons are visible and are there unfilled fields?",
+            "the current Easy Apply wizard page, what buttons are visible and are there unfilled fields?",
             schema=WizardPageState,
         )
         if page is None:
@@ -246,7 +246,7 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
                 extra_info=f"Buttons: {page.visible_buttons}. Click ONLY 'Submit application'.",
             )
             final = await safe_read(s,
-                "the screen after clicking submit — is there a success/confirmation message?",
+                "the screen after clicking submit, is there a success/confirmation message?",
                 schema=WizardPageState,
             )
             await close_modal(s)
@@ -261,7 +261,7 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
 
         # Loop-break guard 
         if page.page_description == last_desc:
-            print("  !! Same page twice — stuck. Closing.")
+            print("  !! Same page twice, stuck. Closing.")
             await close_modal(s)
             raise RetryJob("Wizard stuck on same page.")
         last_desc = page.page_description
@@ -278,10 +278,10 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
         if page.has_unfilled_fields:
             await do(s,
                 "Fill ALL empty/unfilled required fields on this Easy Apply form page.\n"
-                "USE THESE TOOLS (1 call per field — very efficient):\n"
-                "  - type_into(pid, field_query, text) — for text/number fields\n"
-                "  - select_dropdown_option(pid, dropdown_query, option) — for dropdowns\n"
-                "  - select_option_by_label(pid, label_text) — for radio buttons / Yes-No\n"
+                "USE THESE TOOLS (1 call per field, very efficient):\n"
+                "  - type_into(pid, field_query, text), for text/number fields\n"
+                "  - select_dropdown_option(pid, dropdown_query, option), for dropdowns\n"
+                "  - select_option_by_label(pid, label_text), for radio buttons / Yes-No\n"
                 "First call list_active_windows() to get the browser PID, then fill each field.\n"
                 "Do NOT click Next, Submit, Review, or any navigation button. Only fill fields.",
                 max_steps=30,
@@ -308,15 +308,15 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
                 extra_info=f"Buttons: {page.visible_buttons}",
             )
         else:
-            # Submit may be below the fold — scroll and re-check
-            print("  No visible button — scrolling down to check for Submit...")
+            # Submit may be below the fold, scroll and re-check
+            print("  No visible button, scrolling down to check for Submit...")
             await do(s,
                 "Scroll down inside the modal/dialog to reveal any buttons below the fold. "
                 "Use scroll_page('down', 3) or press PageDown.",
                 max_steps=5, verbose=False,
             )
             retry_page = await safe_read(s,
-                "the current Easy Apply wizard page after scrolling — any Submit button now?",
+                "the current Easy Apply wizard page after scrolling, any Submit button now?",
                 schema=WizardPageState,
             )
             if retry_page and retry_page.has_submit_button:
@@ -327,7 +327,7 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
                     extra_info=f"Buttons: {retry_page.visible_buttons}. Click ONLY 'Submit application'.",
                 )
                 final = await safe_read(s,
-                    "the screen after clicking submit — is there a success/confirmation message?",
+                    "the screen after clicking submit, is there a success/confirmation message?",
                     schema=WizardPageState,
                 )
                 await close_modal(s)
@@ -335,7 +335,7 @@ async def apply_to_job(s, resume_path: str, applicant_info: str) -> bool:
                     raise RetryJob("Could not verify submission confirmation.")
                 return final.has_confirmation
             else:
-                print("  Still no button after scroll — closing.")
+                print("  Still no button after scroll, closing.")
                 await close_modal(s)
                 return False
 
@@ -356,7 +356,7 @@ async def run(query: str, count: int, resume_path: str, applicant_info: str):
     skipped = 0
     consecutive_skips = 0
 
-    # Single session for the entire run — no re-navigation between jobs.
+    # Single session for the entire run, no re-navigation between jobs.
     async with orbit.session(llm=LLM) as s:
         # Navigate once
         print(f"\n  Navigating to: {query}")
@@ -391,7 +391,7 @@ async def run(query: str, count: int, resume_path: str, applicant_info: str):
             except Exception as e:
                 skipped += 1
                 consecutive_skips += 1
-                print(f"\n  Hard error — skipping: {e}")
+                print(f"\n  Hard error, skipping: {e}")
 
             # If we've skipped many in a row, scroll to find fresh jobs
             if consecutive_skips >= 3:
@@ -399,7 +399,7 @@ async def run(query: str, count: int, resume_path: str, applicant_info: str):
                 await scroll_job_list(s)
                 consecutive_skips = 0
 
-            # Safety valve — don't loop forever
+            # Safety valve, don't loop forever
             if skipped > count * 3:
                 print(f"\n  Too many skips ({skipped}). Stopping.")
                 break
@@ -413,7 +413,7 @@ async def run(query: str, count: int, resume_path: str, applicant_info: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Orbit — LinkedIn Easy Apply bot",
+        description="Orbit: LinkedIn Easy Apply bot",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
@@ -437,7 +437,7 @@ Examples:
     parser.add_argument(
         "-a", "--applicant", type=str, default=None,
         help="Path to applicant info text file (one '- Key: Value' per line). "
-             "If omitted, uses built-in defaults — edit DEFAULT_APPLICANT_INFO in the script.",
+             "If omitted, uses built-in defaults, edit DEFAULT_APPLICANT_INFO in the script.",
     )
     parser.add_argument(
         "--llm", type=str, default=None,
@@ -467,7 +467,7 @@ Examples:
         global LLM
         LLM = args.llm
 
-    print(f"\n  Orbit — LinkedIn Easy Apply")
+    print(f"\n  Orbit: LinkedIn Easy Apply")
     print(f"  Query:   {args.query}")
     print(f"  Count:   {args.count}")
     print(f"  Resume:  {resume}")

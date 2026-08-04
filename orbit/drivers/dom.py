@@ -1,15 +1,19 @@
-"""DomDriver — Playwright/Patchright-backed DOM perception and action.
+"""DomDriver, Playwright and Patchright backed DOM perception and action.
 
+Notes
+-----
 Transplanted from orbit v1:
-- shadow-DOM-piercing element scan / click / fill / select routing
-  (orbit/smart_dom_tools.py)
-- diagnosis heuristics: not_found / invisible / disabled / covered /
-  off_screen (orbit/_tools/perception.py) — converted to typed raises
-- browser lifecycle with ephemeral-profile pattern and CDP attach
-  (orbit/_tools/browser.py)
 
-All heavy imports (patchright/playwright) are lazy so importing this
-module works with zero optional deps installed.
+* Shadow DOM piercing element scan, click, fill and select routing, from
+  ``orbit/smart_dom_tools.py``.
+* Diagnosis heuristics (not_found, invisible, disabled, covered,
+  off_screen) from ``orbit/_tools/perception.py``, converted here into
+  typed raises.
+* Browser lifecycle with the ephemeral profile pattern and CDP attach,
+  from ``orbit/_tools/browser.py``.
+
+All heavy imports (patchright, playwright) are lazy, so importing this
+module works with zero optional dependencies installed.
 """
 
 from __future__ import annotations
@@ -50,7 +54,7 @@ _PROFILE_FILES = ("Login Data", "Login Data-journal", "Cookies", "Web Data", "We
 # Only three rendering engines exist behind every mainstream browser, and
 # Playwright exposes exactly those. Everything that isn't Firefox or
 # WebKit is a Chromium fork (Edge, Brave, Opera, Vivaldi, Arc...), so the
-# engine is derived, not enumerated — and the binary comes from the OS's
+# engine is derived, not enumerated, and the binary comes from the OS's
 # own PATH lookup rather than a table of guessed install locations.
 _FIREFOX_NAMES = {"firefox", "ff", "mozilla"}
 _WEBKIT_NAMES = {"webkit", "safari", "epiphany"}
@@ -64,7 +68,27 @@ _FIREFOX_PREFS = {
 
 
 def engine_for(browser: str) -> str:
-    """Playwright engine that drives this browser."""
+    """Derive the Playwright engine that drives a named browser.
+
+    Parameters
+    ----------
+    browser : str
+        Browser name, for example ``"chrome"``, ``"firefox"`` or
+        ``"brave"``.
+
+    Returns
+    -------
+    str
+        One of ``"chromium"``, ``"firefox"`` or ``"webkit"``.
+
+    Notes
+    -----
+    Only three rendering engines exist behind every mainstream browser,
+    and Playwright exposes exactly those. Anything that is not Firefox
+    or WebKit is a Chromium fork (Edge, Brave, Opera, Vivaldi, Arc), so
+    the engine is derived rather than enumerated and new forks need no
+    table entry.
+    """
     b = (browser or "chrome").strip().lower()
     if b in _FIREFOX_NAMES:
         return "firefox"
@@ -74,8 +98,27 @@ def engine_for(browser: str) -> str:
 
 
 def find_browser_binary(browser: str) -> Optional[str]:
-    """Locate a browser on PATH. Asks the OS instead of guessing paths;
-    tries the common packaging suffixes for the same name."""
+    """Locate a browser executable on PATH.
+
+    Parameters
+    ----------
+    browser : str
+        Browser name to look for.
+
+    Returns
+    -------
+    str or None
+        Absolute path to the executable, or None if no candidate name
+        is on PATH.
+
+    Notes
+    -----
+    The OS is asked rather than guessing from a table of install
+    locations, and the common packaging suffixes for the same browser
+    are tried in turn, since distributions disagree on whether the
+    binary is called ``chrome``, ``chrome-browser`` or
+    ``google-chrome-stable``.
+    """
     import shutil
 
     b = (browser or "").strip().lower()
@@ -104,10 +147,35 @@ _CHROME_FLAGS = [
 
 
 def _async_playwright(engine: str = "chromium"):
-    """Lazy import of the driver library.
+    """Import the driver library appropriate for one engine.
 
-    Patchright only stealth-patches Chromium, so non-Chromium engines use
-    stock Playwright; Chromium prefers Patchright when it is installed.
+    Parameters
+    ----------
+    engine : str, optional
+        The Playwright engine that will be launched. Default is
+        ``"chromium"``.
+
+    Returns
+    -------
+    Any
+        The ``async_playwright`` factory from the selected library.
+
+    Raises
+    ------
+    SurfaceUnreadable
+        If no suitable library is installed, with the exact install
+        command in the message.
+
+    Notes
+    -----
+    Patchright only stealth patches Chromium, so Chromium prefers
+    Patchright when it is installed and falls back to stock Playwright
+    otherwise.
+
+    Firefox and WebKit must use stock Playwright. Patchright's CDP based
+    patches break on those engines, with page evaluation failing on a
+    cryptic ``_client`` error, so Patchright is refused here rather than
+    letting a run fail deep inside an action.
     """
     # Chromium may use either library. Firefox/WebKit must use stock
     # Playwright: Patchright's CDP-based patches break on them (page
@@ -127,7 +195,7 @@ def _async_playwright(engine: str = "chromium"):
 
 
 # ---------------------------------------------------------------------------
-# Shared JS library — shadow-DOM piercing helpers (transplanted verbatim
+# Shared JS library: shadow-DOM piercing helpers (transplanted verbatim
 # heuristics from smart_dom_tools._JS_SHADOW_LIB)
 # ---------------------------------------------------------------------------
 
@@ -637,6 +705,25 @@ _PICK_OPTION_JS = _JS_SHADOW_LIB + r"""
 
 
 def _element_from_desc(desc: Dict[str, Any]) -> Element:
+    """Convert one JS element description into an Element.
+
+    Parameters
+    ----------
+    desc : Dict[str, Any]
+        The description produced by ``ShadowLib.describe`` in the page.
+
+    Returns
+    -------
+    Element
+        The converted element, carrying DOM provenance and a ref holding
+        the tag, id and center point.
+
+    Notes
+    -----
+    The center point is kept in the ref so that a later action can click
+    exactly the element that was described, without re-resolving it from
+    its name.
+    """
     rect = desc.get("rect") or {}
     return Element(
         role=desc.get("role") or desc.get("tag") or "generic",
@@ -655,7 +742,16 @@ def _element_from_desc(desc: Dict[str, Any]) -> Element:
 
 
 class DomDriver:
-    """Driver over a Playwright/Patchright-managed Chromium page."""
+    """Driver over a Playwright or Patchright managed browser page.
+
+    Attributes
+    ----------
+    name : str
+        Driver id, ``"dom"``.
+    surface : str
+        ``"web"``, so the ladder never uses this driver as a rung for a
+        native task, which would type into a background browser page.
+    """
 
     name = "dom"
     surface = "web"
@@ -668,13 +764,41 @@ class DomDriver:
         executable_path: Optional[str] = None,
         headless: bool = False,
     ) -> None:
+        """Configure the driver without launching a browser.
+
+        Parameters
+        ----------
+        browser : str, optional
+            Browser name, used to derive the engine and to look up a
+            system binary. Default is ``"chrome"``.
+        persistent_profile : str, optional
+            Path to a profile directory whose credentials should be
+            copied in at start and synced back on clean stop. Default is
+            None, meaning a throwaway profile.
+        executable_path : str, optional
+            Explicit browser binary to launch. Default is None, which
+            triggers a PATH lookup for Chromium engines only.
+        headless : bool, optional
+            Whether to launch without a visible window. Default is
+            False.
+
+        Notes
+        -----
+        Chromium family browsers speak standard CDP, so any installed
+        build works and a system binary beats the often absent bundled
+        one. Firefox and WebKit are driven through a patched protocol
+        and work ONLY with the driver's own build: a system Firefox
+        exits immediately. Those engines are therefore never pointed at
+        a system binary, which is why the PATH lookup is gated on the
+        engine being Chromium.
+        """
         self._persistent_profile = persistent_profile
         self._browser = (browser or "chrome").strip().lower()
         self._engine = engine_for(self._browser)
         # Chromium-family browsers speak standard CDP, so any installed
         # build works and a system binary beats the (often absent) bundled
         # one. Firefox/WebKit are driven through a patched protocol and
-        # ONLY work with the driver's own build — a system Firefox exits
+        # ONLY work with the driver's own build: a system Firefox exits
         # immediately. So we never point those at a system binary.
         if executable_path is None and self._engine == "chromium":
             executable_path = find_browser_binary(self._browser)
@@ -691,11 +815,37 @@ class DomDriver:
     # -- lifecycle ----------------------------------------------------------
 
     async def start(self, *, purge_stale: bool = True) -> None:
-        """Launch Chromium with the ephemeral-profile pattern.
+        """Launch the browser using the ephemeral profile pattern.
 
-        The persistent profile (if configured) is copied to a temp dir so the
-        source is never locked/corrupted by a live browser; credentials sync
-        back on clean stop(). Stale temp dirs from aborted runs are purged.
+        Parameters
+        ----------
+        purge_stale : bool, optional
+            Whether to delete leftover temp profiles from aborted runs
+            before starting. Default is True; the crash recovery path
+            passes False so it does not disturb a concurrent session.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If no suitable driver library is installed for the engine.
+
+        Notes
+        -----
+        The persistent profile, when configured, is copied to a temp
+        directory so the source is never locked or corrupted by a live
+        browser, and credentials sync back on a clean stop.
+
+        Engine specific setup differs because Firefox rejects Chrome's
+        command line flags outright and takes preferences instead.
+        Accessibility is force enabled either way, just through a
+        different door.
+
+        The temp profile is removed if launch fails, so a failed start
+        leaves nothing behind. The call is idempotent once running.
         """
         async with self._lock:
             if self._playwright is not None:
@@ -734,11 +884,33 @@ class DomDriver:
 
     @classmethod
     async def connect_cdp(cls, port: int) -> "DomDriver":
-        """Attach to a running Chromium/Electron app on localhost:<port>.
+        """Attach to a running Chromium or Electron app over CDP.
 
-        The target must have been launched with --remote-debugging-port.
-        Common defaults: 9222 (Chrome), 9229 (Electron). No profile sync
-        happens on stop() for CDP-attached instances.
+        Parameters
+        ----------
+        port : int
+            Local debugging port the target is listening on. Common
+            defaults are 9222 for Chrome and 9229 for Electron.
+
+        Returns
+        -------
+        DomDriver
+            A driver bound to the existing browser's first context.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the target exposes no browser contexts.
+
+        Notes
+        -----
+        The target must have been launched with
+        ``--remote-debugging-port``. No profile sync happens on stop for
+        CDP attached instances, because the profile belongs to the app
+        we attached to and is not ours to write back.
+
+        Playwright is stopped again if attaching fails, so a failed
+        attach does not leak a driver process.
         """
         driver = cls()
         factory = _async_playwright('chromium')
@@ -767,6 +939,20 @@ class DomDriver:
         return driver
 
     async def stop(self) -> None:
+        """Close the browser, sync the profile back, and release resources.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Errors from closing are logged rather than raised, so teardown
+        always completes and never masks the real outcome of a run. The
+        profile is synced back only for browsers this driver launched,
+        never for CDP attached ones, and the temp directory is removed
+        either way.
+        """
         async with self._lock:
             if self._context is not None:
                 try:
@@ -788,13 +974,45 @@ class DomDriver:
                 self._playwright = None
 
     async def __aenter__(self) -> "DomDriver":
+        """Start the browser on entering an async context.
+
+        Returns
+        -------
+        DomDriver
+            This driver, started and ready.
+        """
         await self.start()
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        """Stop the browser on leaving an async context.
+
+        Parameters
+        ----------
+        *exc : Any
+            Standard exception triple, ignored: teardown is
+            unconditional.
+
+        Returns
+        -------
+        None
+        """
         await self.stop()
 
     def _prepare_tmp_profile(self) -> str:
+        """Create a throwaway profile directory, seeded from the persistent one.
+
+        Returns
+        -------
+        str
+            Path to the newly created temp profile directory.
+
+        Notes
+        -----
+        Only the credential bearing files are copied, not the whole
+        profile, which keeps startup fast and avoids dragging along
+        caches or lock files from the source profile.
+        """
         tmp = f"{_TMP_PROFILE_PREFIX}{uuid.uuid4().hex}"
         os.makedirs(os.path.join(tmp, "Default"), exist_ok=True)
         src_root = self._persistent_profile
@@ -806,6 +1024,24 @@ class DomDriver:
         return tmp
 
     def _sync_profile_back(self, tmp_profile: str) -> None:
+        """Copy credential files from the temp profile back to the source.
+
+        Parameters
+        ----------
+        tmp_profile : str
+            Path to the temp profile being torn down.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        This is how a login performed during a run survives to the next
+        one. Failures are logged rather than raised, since losing a
+        session refresh must not fail an otherwise successful run. The
+        copy is a no-op when no persistent profile was configured.
+        """
         dst_root = self._persistent_profile
         if not dst_root or not os.path.exists(tmp_profile):
             return
@@ -819,6 +1055,29 @@ class DomDriver:
             log.error("profile sync failed: %s", exc)
 
     async def _require_page(self) -> Any:
+        """Return a live page, recovering from a dead browser if necessary.
+
+        Returns
+        -------
+        Any
+            A Playwright page that is open and brought to the front.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the browser cannot be started at all.
+
+        Notes
+        -----
+        A page whose handle is still valid is reused. Otherwise a live
+        page is picked from the context, preferring one that has
+        actually navigated somewhere over a blank tab.
+
+        If the browser or context died underneath us, from a crash or an
+        external close, the driver relaunches rather than cascading the
+        failure into every subsequent action. Stale profile purging is
+        skipped on that path so a concurrent session is left alone.
+        """
         if self._playwright is None:
             await self.start()
         if self._page is not None and not self._page.is_closed():
@@ -850,6 +1109,31 @@ class DomDriver:
     # -- Driver protocol ----------------------------------------------------
 
     async def observe(self) -> Observation:
+        """Scan the live page into an observation.
+
+        Returns
+        -------
+        Observation
+            A browser observation carrying interactive elements from the
+            main frame and every readable child frame, the page text,
+            title, url and modal count.
+
+        Raises
+        ------
+        SurfaceUnreadable
+            If the page cannot be scanned even after one retry.
+
+        Notes
+        -----
+        A tab closed or navigated mid observation drops the stale handle
+        and retries once against whatever page is now live, which turns
+        a common race into a non-event.
+
+        The flattened element list is cached so a later act can address
+        an element by ref: the model points at the index it was shown
+        rather than re-describing the element in words, which removes
+        any chance of the description resolving to a different element.
+        """
         for attempt in (0, 1):
             page = await self._require_page()
             try:
@@ -893,14 +1177,34 @@ class DomDriver:
         )
 
     async def _scan_frames(self, page: Any) -> tuple:
-        """Scan child frames, returning page-space elements and their text.
+        """Scan child frames, returning page space elements and their text.
 
-        Each frame reports geometry relative to its own document, so every
-        rect is offset by the frame's position in the page. Without that
-        translation a click computed from an iframe element would land at
-        the wrong place on screen. Frames that cannot be read (detached
-        mid-scan, or still blank) are skipped rather than failing the
-        observation.
+        Parameters
+        ----------
+        page : Any
+            The Playwright page whose child frames should be scanned.
+
+        Returns
+        -------
+        tuple
+            A pair of the page space elements and the joined frame text.
+
+        Notes
+        -----
+        Iframes are separate documents, so the main frame scan cannot
+        see into them. Embedded checkouts, payment fields, editors and
+        consent dialogs would all be invisible without scanning them
+        explicitly.
+
+        Each frame reports geometry relative to its own document, so
+        every rect is offset by the frame's position within the page.
+        Without that translation a click computed from an iframe element
+        would land in the wrong place on screen.
+
+        Frames that cannot be read, whether detached mid scan or still
+        blank, are skipped rather than failing the whole observation.
+        Both the frame count and the elements taken from each are capped
+        because an ad heavy page can carry dozens of tracking iframes.
         """
         elements: List[Element] = []
         texts: List[str] = []
@@ -937,15 +1241,75 @@ class DomDriver:
 
     @staticmethod
     def can_navigate(target: Optional[str]) -> bool:
-        """This driver opens web targets (URLs / bare hosts)."""
+        """Report whether this driver claims a navigate target.
+
+        Parameters
+        ----------
+        target : str or None
+            The navigate target to classify.
+
+        Returns
+        -------
+        bool
+            True for web targets: URLs and bare hosts.
+
+        Notes
+        -----
+        The complement of this predicate is claimed by the
+        accessibility driver, and both route by the same shared
+        :func:`is_web_target` definition.
+        """
         return is_web_target(target)
 
     def pointer(self) -> "_PagePointer":
-        """Surface-local input, handed to the vision rung so grounded page
-        coordinates are clicked in page space (not OS-global screen space)."""
+        """Build a surface local input adapter for this page.
+
+        Returns
+        -------
+        _PagePointer
+            An adapter driving the page's own mouse and keyboard.
+
+        Notes
+        -----
+        This is handed to the vision rung so that grounded page
+        coordinates are clicked in page space rather than OS global
+        screen space. Vision grounds on the page bitmap, so acting
+        through page input keeps both halves in the same coordinate
+        system and works even without a reachable display.
+        """
         return _PagePointer(self)
 
     async def act(self, action: Action) -> Optional[Element]:
+        """Resolve a target on the live page and act on it atomically.
+
+        Parameters
+        ----------
+        action : Action
+            The action to perform.
+
+        Returns
+        -------
+        Element or None
+            The element acted on, or None for NAVIGATE, PRESS and
+            untargeted SCROLL.
+
+        Raises
+        ------
+        TargetNotFound
+            If a required value is missing, the target cannot be
+            resolved, or the action kind is unsupported.
+        TargetObstructed
+            If the element is present but invisible, disabled or
+            covered.
+        SurfaceUnreadable
+            If no live page can be obtained.
+
+        Notes
+        -----
+        A bare target string is given a scheme when navigating, so that
+        a bare host resolves rather than being treated as a relative
+        path.
+        """
         page = await self._require_page()
 
         if action.kind is ActionKind.NAVIGATE:
@@ -976,6 +1340,20 @@ class DomDriver:
         raise TargetNotFound(f"unsupported action kind: {action.kind}")
 
     async def screenshot(self) -> Optional[bytes]:
+        """Capture the visible page area as PNG bytes.
+
+        Returns
+        -------
+        bytes or None
+            PNG bytes, or None if the page cannot be captured.
+
+        Notes
+        -----
+        The capture is viewport only, not full page, because it is used
+        for vision grounding and must correspond to what is actually on
+        screen for coordinates to be meaningful. Errors are reported as
+        None, matching the protocol's treatment of an absent screenshot.
+        """
         try:
             page = await self._require_page()
             return await page.screenshot(type="png", full_page=False)
@@ -986,7 +1364,21 @@ class DomDriver:
 
     @staticmethod
     def _normalize_chord(chord: str) -> str:
-        """"ctrl+a" -> "Control+a"; single keys pass through."""
+        """Translate a colloquial key chord into Playwright's key names.
+
+        Parameters
+        ----------
+        chord : str
+            Key chord with parts separated by plus signs, for example
+            ``"ctrl+a"``.
+
+        Returns
+        -------
+        str
+            The chord with known aliases replaced, for example
+            ``"Control+a"``. Unrecognised parts, including single
+            character keys, pass through unchanged.
+        """
         replacements = {"ctrl": "Control", "cmd": "Meta", "win": "Meta",
                         "alt": "Alt", "shift": "Shift", "enter": "Enter",
                         "esc": "Escape", "escape": "Escape", "tab": "Tab",
@@ -999,6 +1391,27 @@ class DomDriver:
         return "+".join(replacements.get(p.lower(), p) for p in parts)
 
     async def _scroll(self, page: Any, action: Action) -> Optional[Element]:
+        """Scroll an element into view, or scroll the page in a direction.
+
+        Parameters
+        ----------
+        page : Any
+            The live Playwright page.
+        action : Action
+            The scroll action. A target scrolls that element into view;
+            otherwise the value names a direction.
+
+        Returns
+        -------
+        Element or None
+            The element scrolled into view, or None for a directional
+            page scroll.
+
+        Raises
+        ------
+        TargetNotFound
+            If a target was named but no element matches it.
+        """
         if action.target:
             found = await page.evaluate(
                 _JS_SHADOW_LIB + r"""
@@ -1024,6 +1437,28 @@ class DomDriver:
         return None
 
     def _raise_blocked(self, action: Action, blocked: Dict[str, Any]) -> None:
+        """Convert a JS diagnosis into a typed obstruction error.
+
+        Parameters
+        ----------
+        action : Action
+            The action that was blocked, used for its kind and target in
+            the message.
+        blocked : Dict[str, Any]
+            The diagnosis from ``ShadowLib.diagnose``, carrying a reason
+            and the element, plus the covering element when relevant.
+
+        Returns
+        -------
+        None
+            Never returns normally.
+
+        Raises
+        ------
+        TargetObstructed
+            Always, carrying the reason and element details so a caller
+            can tell "covered by a banner" from "genuinely disabled".
+        """
         raise TargetObstructed(
             f"{action.kind.value} target {action.target!r} is {blocked['reason']}",
             reason=blocked["reason"],
@@ -1033,18 +1468,76 @@ class DomDriver:
         )
 
     def _by_ref(self, ref: Optional[int]) -> Optional[Element]:
-        """Element the model pointed at, from the last rendered observation."""
+        """Look up the element the model pointed at by observation index.
+
+        Parameters
+        ----------
+        ref : int or None
+            Index into the last rendered observation, or None when the
+            action carried no ref.
+
+        Returns
+        -------
+        Element or None
+            The referenced element, or None when ``ref`` is None.
+
+        Raises
+        ------
+        TargetNotFound
+            If the ref is out of range, meaning the caller is working
+            from a stale view and should observe again.
+
+        Notes
+        -----
+        Addressing by ref rather than re-matching by name is what keeps
+        acting deterministic: the index names exactly the element that
+        was rendered, even when several controls share a label.
+        """
         if ref is None:
             return None
         if 0 <= ref < len(self._last_elements):
             return self._last_elements[ref]
         raise TargetNotFound(
             f"ref {ref} is out of range (observation had "
-            f"{len(self._last_elements)} elements) — observe again",
+            f"{len(self._last_elements)} elements), observe again",
             target=str(ref),
         )
 
     async def _click(self, page: Any, action: Action) -> Element:
+        """Resolve a click target and click it atomically.
+
+        Parameters
+        ----------
+        page : Any
+            The live Playwright page.
+        action : Action
+            The click action, carrying a ref or a target description.
+
+        Returns
+        -------
+        Element
+            The element that was clicked.
+
+        Raises
+        ------
+        TargetNotFound
+            If neither a ref nor a target was supplied, or nothing
+            matches the description, with the closest labels attached.
+        TargetObstructed
+            If the element is disabled, invisible or covered.
+
+        Notes
+        -----
+        A ref with known coordinates clicks directly, skipping
+        resolution entirely. A ref whose coordinates are missing
+        degrades to a name based resolution using the element's own
+        name, which is still better than the original description.
+
+        After the in page click, a real mouse click is fired at the same
+        point as a second event, which satisfies ``isTrusted`` checks
+        that reject synthetic events. It is best effort: the JS click
+        has already fired, so a failure here is deliberately ignored.
+        """
         el = self._by_ref(action.ref)
         if el is not None:
             cx, cy = el.ref.get("cx"), el.ref.get("cy")
@@ -1075,7 +1568,7 @@ class DomDriver:
 
         clicked = result["clicked"]
         cx, cy = clicked["rect"]["cx"], clicked["rect"]["cy"]
-        # Real mouse click as a second event — handles isTrusted checks.
+        # Real mouse click as a second event: handles isTrusted checks.
         try:
             await page.mouse.click(cx, cy)
         except Exception:
@@ -1084,6 +1577,40 @@ class DomDriver:
         return _element_from_desc(clicked)
 
     async def _fill(self, page: Any, action: Action) -> Element:
+        """Resolve a field and fill it atomically.
+
+        Parameters
+        ----------
+        page : Any
+            The live Playwright page.
+        action : Action
+            The fill action, carrying a ref or target plus the value.
+
+        Returns
+        -------
+        Element
+            The element that was filled.
+
+        Raises
+        ------
+        TargetNotFound
+            If no value was supplied, neither ref nor target was given,
+            no input matches, or the field is a select whose options do
+            not include the requested value.
+        TargetObstructed
+            If the field is invisible or disabled.
+
+        Notes
+        -----
+        A ref with known coordinates clicks the field and types through
+        real key events, selecting existing content first so the value
+        is replaced rather than appended.
+
+        The in page path routes native selects automatically and keeps
+        the heuristic of preferring a non-select input that also matches
+        the label, which handles the common phone country code layout
+        where a select sits beside the real text input.
+        """
         if action.value is None:
             raise TargetNotFound("fill requires a value")
         el = self._by_ref(action.ref)
@@ -1121,9 +1648,40 @@ class DomDriver:
         return _element_from_desc(result["filled"])
 
     async def _select(self, page: Any, action: Action) -> Element:
+        """Choose an option in a native or custom dropdown.
+
+        Parameters
+        ----------
+        page : Any
+            The live Playwright page.
+        action : Action
+            The select action, carrying the dropdown target and the
+            option value.
+
+        Returns
+        -------
+        Element
+            The dropdown or option element that was selected.
+
+        Raises
+        ------
+        TargetNotFound
+            If target or value is missing, no dropdown matches, or the
+            option never becomes visible, with the available options
+            attached.
+
+        Notes
+        -----
+        Three strategies are tried in order of reliability: the fill
+        path, which handles a native select directly; clicking the
+        trigger and picking a rendered ARIA option; and finally a
+        keyboard type ahead, transplanted from ``dom_smart_select``, for
+        virtualised lists that only render the matching option once
+        typed into.
+        """
         if not action.target or action.value is None:
             raise TargetNotFound("select requires target and value")
-        # First try the fill path — it handles native <select> directly.
+        # First try the fill path: it handles native <select> directly.
         label, _ = parse_description(action.target)
         result = await page.evaluate(
             _FILL_JS, {"label": label or action.target, "value": action.value}
@@ -1181,26 +1739,110 @@ class DomDriver:
 
 
 class _PagePointer:
-    """Page-space input adapter used by the vision rung on browser surfaces."""
+    """Page space input adapter used by the vision rung on browser surfaces.
+
+    Notes
+    -----
+    Vision grounds on the page bitmap, so its coordinates are in page
+    space. Driving the page's own mouse and keyboard keeps acting in
+    that same space, instead of translating to OS global screen
+    coordinates and depending on window position and a reachable
+    display.
+    """
 
     def __init__(self, driver: "DomDriver") -> None:
+        """Bind the adapter to a DOM driver.
+
+        Parameters
+        ----------
+        driver : DomDriver
+            The driver whose live page will receive the input.
+        """
         self._driver = driver
 
     async def click(self, x: float, y: float) -> None:
+        """Click a point in page space.
+
+        Parameters
+        ----------
+        x : float
+            Horizontal page coordinate.
+        y : float
+            Vertical page coordinate.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        A short pause afterwards gives the page a moment to react before
+        the caller observes, so the effect check sees the result rather
+        than the state before it.
+        """
         page = await self._driver._require_page()
         await page.mouse.click(float(x), float(y))
         await asyncio.sleep(0.15)
 
     async def type(self, text: str) -> None:
+        """Type text at the current focus, replacing existing content.
+
+        Parameters
+        ----------
+        text : str
+            The text to type.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Existing content is selected first so the value is replaced
+        rather than appended to whatever the field already held.
+        """
         page = await self._driver._require_page()
         await page.keyboard.press("Control+a")
         await page.keyboard.type(text)
 
     async def press(self, chord: str) -> None:
+        """Send a key chord to the page.
+
+        Parameters
+        ----------
+        chord : str
+            Key chord in colloquial form, for example ``"ctrl+s"``,
+            normalized to Playwright's key names before sending.
+
+        Returns
+        -------
+        None
+        """
         page = await self._driver._require_page()
         await page.keyboard.press(self._driver._normalize_chord(chord))
 
     async def scroll(self, x: float, y: float, direction: str) -> None:
+        """Scroll the page at a point in page space.
+
+        Parameters
+        ----------
+        x : float
+            Horizontal page coordinate to scroll at.
+        y : float
+            Vertical page coordinate to scroll at.
+        direction : str
+            Either ``"up"`` or anything else, which scrolls down.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        The pointer is moved first so the wheel event lands on the
+        intended scrollable container rather than wherever the pointer
+        happened to be.
+        """
         page = await self._driver._require_page()
         await page.mouse.move(float(x), float(y))
         await page.mouse.wheel(0, -400 if direction == "up" else 400)

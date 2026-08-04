@@ -2,15 +2,22 @@
 
 Given a list of :class:`~orbit.types.Element` and a natural-language
 target description ("the login button", "Email address field"), return
-ranked matches. No I/O — fully unit-testable.
+ranked matches. There is no I/O here, so the module is fully unit
+testable.
 
-Heuristics (transplanted from the v1 smart_dom_tools / ui.py matchers):
-- exact name match beats partial containment beats token overlap
-- role words embedded in the description ("button", "link", "field", ...)
-  act as a role hint: matching roles get a bonus, and the role word is
-  stripped from the name comparison
-- disabled elements are slightly penalized (still returned — the caller
-  decides whether to raise TargetObstructed)
+Notes
+-----
+Heuristics transplanted from the v1 ``smart_dom_tools`` and ``ui.py``
+matchers:
+
+* An exact name match beats partial containment, which beats token
+  overlap.
+* Role words embedded in the description ("button", "link", "field")
+  act as a role hint. Matching roles get a bonus and the role word is
+  stripped from the name comparison.
+* Disabled elements are slightly penalized but still returned. The
+  caller decides whether to raise TargetObstructed, since the matcher
+  should not conflate "not found" with "found but unavailable".
 """
 
 from __future__ import annotations
@@ -48,21 +55,62 @@ _STOPWORDS = frozenset({"the", "a", "an", "on", "in", "of", "for", "to", "with"}
 
 @dataclass
 class Match:
+    """One scored candidate element.
+
+    Attributes
+    ----------
+    element : Element
+        The candidate element.
+    score : float
+        Its match score against the description, higher is better.
+    """
+
     element: Element
     score: float
 
 
 def _normalize(text: str) -> str:
-    """Lower-case, strip wrapping quotes/backticks and collapse whitespace."""
+    """Lower-case, strip wrapping quotes and backticks, collapse whitespace.
+
+    Parameters
+    ----------
+    text : str
+        Raw text to normalize.
+
+    Returns
+    -------
+    str
+        The normalized comparison form.
+    """
     t = text.strip().strip('"').strip("'").strip("`").strip()
     return re.sub(r"\s+", " ", t).lower()
 
 
 def parse_description(description: str) -> Tuple[str, Optional[Tuple[str, ...]]]:
-    """Split a description into (name text, role hint roles).
+    """Split a description into its name text and any role hint.
 
-    "the login button" -> ("login", ("button", ...))
-    "Email address"    -> ("email address", None)
+    Parameters
+    ----------
+    description : str
+        Natural-language target description.
+
+    Returns
+    -------
+    Tuple[str, Optional[Tuple[str, ...]]]
+        The remaining name text, and the tuple of roles the description
+        hinted at, or None if no role word was present.
+
+    Notes
+    -----
+    Only the first role word encountered is consumed as a hint. Later
+    ones stay in the name text, since a description like "open menu
+    button" should still compare against the word "menu". Stopwords are
+    dropped entirely.
+
+    Examples
+    --------
+    "the login button" becomes ("login", ("button", ...)) and
+    "Email address" becomes ("email address", None).
     """
     words = [w for w in _normalize(description).split(" ") if w]
     hint: Optional[Tuple[str, ...]] = None
@@ -78,6 +126,28 @@ def parse_description(description: str) -> Tuple[str, Optional[Tuple[str, ...]]]
 
 
 def _token_overlap(a: str, b: str) -> float:
+    """Measure shared-word overlap between two normalized strings.
+
+    Parameters
+    ----------
+    a : str
+        First normalized string.
+    b : str
+        Second normalized string.
+
+    Returns
+    -------
+    float
+        Count of shared non-stopword tokens divided by the larger token
+        set size, in the range 0.0 to 1.0. Returns 0.0 if either side
+        has no usable tokens.
+
+    Notes
+    -----
+    Dividing by the larger set rather than the union penalizes a short
+    query that happens to be a subset of a very long label, which keeps
+    generic labels from absorbing every query.
+    """
     ta = {w for w in a.split(" ") if w and w not in _STOPWORDS}
     tb = {w for w in b.split(" ") if w and w not in _STOPWORDS}
     if not ta or not tb:
@@ -86,7 +156,30 @@ def _token_overlap(a: str, b: str) -> float:
 
 
 def score_element(element: Element, description: str) -> float:
-    """Score one element against a description. 0.0 = no match."""
+    """Score one element against a description.
+
+    Parameters
+    ----------
+    element : Element
+        The candidate element to score.
+    description : str
+        Natural-language target description.
+
+    Returns
+    -------
+    float
+        Match strength, where 0.0 means no match. Scores are clamped to
+        a maximum of 1.15 so that a role bonus can push a perfect name
+        match above other exact matches without unbounded growth.
+
+    Notes
+    -----
+    A quoted span in the description is treated as the element's literal
+    name and wins before any fuzzy heuristic. The model quotes what it
+    sees in the observation, often echoing the render format verbatim,
+    so this is the strongest available signal and it also covers symbol
+    names that normalization would otherwise strip.
+    """
     needle, role_hint = parse_description(description)
     if not needle and not role_hint and not description.strip():
         return 0.0
@@ -98,8 +191,8 @@ def score_element(element: Element, description: str) -> float:
 
     # The model quotes what it sees in the observation, often echoing the
     # render format verbatim: `button '7' (Clear Display [Escape])`.
-    # A quoted span is therefore the strongest signal — the element's
-    # literal name — and must win before any fuzzy heuristics. This also
+    # A quoted span is therefore the strongest signal (the element's
+    # literal name) and must win before any fuzzy heuristics. This also
     # covers symbol names ('×', '=') that normalization would strip.
     raw_name = (element.name or "").strip()
     quoted = re.search(r"['\"]([^'\"]+)['\"]", description)
@@ -120,14 +213,14 @@ def score_element(element: Element, description: str) -> float:
             score = 0.7
         elif hint and (needle in hint or _token_overlap(hint, needle) >= 0.5):
             # Symbol-labeled controls ('×') carry their meaning in the
-            # hint ("Multiply [*]") — often the only word-based signal.
+            # hint ("Multiply [*]"), often the only word-based signal.
             score = 0.65
         elif value and needle in value:
             score = 0.5
         else:
             score = 0.6 * _token_overlap(name, needle)
     elif role_hint:
-        # Pure role query like "the button" — weak base score.
+        # Pure role query like "the button": weak base score.
         score = 0.2
 
     if score <= 0.0:
@@ -152,8 +245,21 @@ def rank_matches(
 ) -> List[Match]:
     """Rank elements against a description, best first.
 
-    Returns only matches scoring >= min_score; empty list if nothing
-    plausibly matches.
+    Parameters
+    ----------
+    elements : Sequence[Element]
+        Candidate elements to rank.
+    description : str
+        Natural-language target description.
+    min_score : float, optional
+        Minimum score an element must reach to be returned. Default is
+        0.3.
+
+    Returns
+    -------
+    List[Match]
+        Matches scoring at or above ``min_score``, sorted by descending
+        score. Empty if nothing plausibly matches.
     """
     scored = [Match(el, score_element(el, description)) for el in elements]
     scored = [m for m in scored if m.score >= min_score]
@@ -166,12 +272,49 @@ def best_match(
     description: str,
     min_score: float = 0.3,
 ) -> Optional[Element]:
+    """Return the single best matching element, if any clears the threshold.
+
+    Parameters
+    ----------
+    elements : Sequence[Element]
+        Candidate elements to search.
+    description : str
+        Natural-language target description.
+    min_score : float, optional
+        Minimum score the winner must reach. Default is 0.3.
+
+    Returns
+    -------
+    Element or None
+        The highest scoring element, or None if nothing plausibly
+        matches.
+    """
     matches = rank_matches(elements, description, min_score=min_score)
     return matches[0].element if matches else None
 
 
 def suggestions(elements: Sequence[Element], limit: int = 5) -> List[str]:
-    """Closest-label suggestions for TargetNotFound context."""
+    """Collect nearby element labels to attach to a TargetNotFound error.
+
+    Parameters
+    ----------
+    elements : Sequence[Element]
+        Elements available on the surface when resolution failed.
+    limit : int, optional
+        Maximum number of suggestions to return. Default is 5.
+
+    Returns
+    -------
+    List[str]
+        Distinct non-blank element names, each truncated to 60
+        characters, in observation order.
+
+    Notes
+    -----
+    Suggestions are what let a failed action produce an actionable error
+    rather than a bare "not found", so the caller can retarget without
+    another full observation.
+    """
     names = []
     for el in elements:
         if el.name and el.name.strip() and el.name not in names:

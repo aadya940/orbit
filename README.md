@@ -5,7 +5,7 @@
 
 # Orbit
 
-**Automate any app — desktop or browser — with composable, typed steps.**
+**Automate any app, desktop or browser, with composable, typed steps.**
 
 Natural language controls the screen. Python controls the flow.
 
@@ -41,12 +41,12 @@ Structured extraction into Pydantic models. Real conditionals. Real control flow
 
 ## Why
 
-Agents loop, click the wrong thing, and can't be steered. Orbit splits execution into independent steps — **do · read · check · navigate · fill** — each with its own model, its own step budget, and typed output.
+Agents loop, click the wrong thing, and can't be steered. Orbit splits execution into independent steps (**do · read · check · navigate · fill**), each with its own model, its own step budget, and typed output.
 
 - **Goes where browser agents can't.** One workflow can read a website, drive a native desktop app, and come back.
 - **Verifies every action.** If a click didn't actually change anything, Orbit notices and tries another way instead of confidently marching on.
 - **Sees any app.** Cooperative apps are read through the accessibility tree and the live DOM. Canvas apps, custom-drawn UI and remote desktops fall back to pixels automatically.
-- **Cheap model for clicks, powerful model for reasoning** — set `llm=` per step.
+- **Cheap model for clicks, powerful model for reasoning.** Set `llm=` per step.
 - **Hard step caps.** Nothing runs forever.
 
 ## Beyond the screen
@@ -100,19 +100,19 @@ Any model works via LiteLLM: set `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROP
 | verb | what it does |
 |---|---|
 | `s.do(task)` | perform an action, stop when done |
-| `s.read(task, schema=Model)` | extract typed data — returns a validated Pydantic instance |
-| `s.check(condition)` | returns a real `bool`, for `if` statements |
+| `s.read(task, schema=Model)` | extract typed data, returning a validated Pydantic instance |
+| `s.check(condition)` | returns a real `bool` for `if` statements |
 | `s.navigate(target)` | open a URL or launch an app |
 | `s.fill(form, data)` | fill a form from a dict |
 
 Every call takes `llm=`, `max_steps=`, `guidance=` and `timeout=` overrides.
 
-Results are typed: `result.ok`, `result.output`, `result.status`, `result.steps_used`, and `result.journal` — a full record of what happened.
+Results are typed: `result.ok`, `result.output`, `result.status`, `result.steps_used`, and `result.journal`, a full record of what happened.
 
 ## Learn more
 
-- [`example.py`](example.py) — every feature in one file, runnable
-- [`examples/`](examples/) — full end-to-end workflows
+- [`example.py`](example.py): every feature in one file, runnable
+- [`examples/`](examples/): full end-to-end workflows
 
 Windows, Linux and macOS · Python 3.10+
 
