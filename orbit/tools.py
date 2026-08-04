@@ -151,7 +151,40 @@ class Tool:
 def tool(name: str, description: str,
          params: Optional[Dict[str, Any]] = None,
          required: Optional[List[str]] = None) -> Callable:
-    """Decorator turning a function into an agent-callable Tool."""
+    """Decorator turning a function into an agent-callable Tool.
+
+    Parameters
+    ----------
+    name : str
+        Name the model uses to call the tool.
+    description : str
+        One-line explanation shown to the model.
+    params : Optional[Dict[str, Any]], optional
+        JSON Schema properties for the arguments. Default is ``None``,
+        meaning the tool takes no arguments.
+    required : Optional[List[str]], optional
+        Names of arguments the model must supply. Default is ``None``,
+        which treats every declared parameter as required.
+
+    Returns
+    -------
+    Callable
+        Decorator that replaces the decorated function with a
+        :class:`Tool`.
+
+    Examples
+    --------
+    >>> @tool("send_slack", "Post a message.", {"text": {"type": "string"}})
+    ... async def send_slack(text: str) -> str:
+    ...     return "sent"
+
+    Notes
+    -----
+    Custom tools registered via ``@tool`` override defaults of the same
+    name. Their results are truncated so a single tool call cannot swamp
+    the model's context, and exceptions they raise are returned to the
+    model as text so it can adapt rather than the run dying.
+    """
     def wrap(fn: Callable) -> Tool:
         """Build a :class:`Tool` from the decorated function.
 
@@ -839,13 +872,54 @@ DEFAULT_TOOLS: List[Tool] = [
 
 
 def default_tools() -> List[Tool]:
-    """The standard tool set given to every session."""
+    """Return the standard tool set given to every session.
+
+    Returns
+    -------
+    List[Tool]
+        A fresh list of the default tools, so callers can mutate it
+        without disturbing the module-level set.
+
+    Examples
+    --------
+    >>> sorted(t.name for t in default_tools())[:2]
+    ['append_file', 'clipboard_read']
+
+    Notes
+    -----
+    Every one of these returns a string the model reads, truncated so a
+    single tool call cannot swamp the model's context.
+    """
     return list(DEFAULT_TOOLS)
 
 
 def build_registry(extra: Optional[List[Tool]] = None,
                    include_defaults: bool = True) -> Dict[str, Tool]:
-    """Name -> Tool, with user tools overriding defaults of the same name."""
+    """Build the name to Tool registry a session hands to the agent.
+
+    Parameters
+    ----------
+    extra : Optional[List[Tool]], optional
+        User tools to register. Default is ``None``.
+    include_defaults : bool, optional
+        Whether to seed the registry with the standard tool set. Default
+        is ``True``.
+
+    Returns
+    -------
+    Dict[str, Tool]
+        Mapping of tool name to tool.
+
+    Examples
+    --------
+    >>> sorted(build_registry([], include_defaults=False))
+    []
+
+    Notes
+    -----
+    Extras are applied last, so custom tools registered via ``@tool``
+    override defaults of the same name.
+    """
     registry: Dict[str, Tool] = {}
     if include_defaults:
         for t in default_tools():
