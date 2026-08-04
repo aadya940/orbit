@@ -1,7 +1,7 @@
 """The owned agent loop: observe -> think -> act, with delta prompting.
 
 The model sees a uniform toolset (act/press/navigate/observe/ask_human/
-finish) and never picks drivers — fallback is mechanical in the World.
+finish) and never picks drivers. Fallback is mechanical in the World.
 """
 
 from __future__ import annotations
@@ -33,17 +33,17 @@ SYSTEM_PROMPT = """You are Orbit, an agent operating a computer to complete one 
 You interact only through tools. Each turn, review the latest observation
 or tool result, then call exactly one tool:
 - act(kind, ref, value): perform click / fill / select / scroll on an
-  element. Address it by `ref` — the [number] shown next to it in the
+  element. Address it by `ref`, the [number] shown next to it in the
   observation. Only fall back to `target` (a description) if nothing in
   the list fits. For fill/select, `value` is the text or option. To enter
   text (a field, a text editor, a document), ALWAYS use
-  act(kind="fill", ref=<the text area>, value=<the text>) — never press.
+  act(kind="fill", ref=<the text area>, value=<the text>), never press.
 - press(keys): press a SINGLE key or shortcut chord only, e.g. "Enter",
   "ctrl+s", "Tab". Never pass free text here.
 - navigate(value): open a URL or application.
 - observe(detail, offset, query): request screen content at the detail you
   need. Default is a compact summary. If the answer should be on-screen
-  but is not in what you were shown, do NOT scroll or click around —
+  but is not in what you were shown, do NOT scroll or click around:
   call observe(detail="text", offset=...) to page through the full text,
   or observe(query="...") to get text around matches. Elision notices
   tell you exactly how much more exists.
@@ -71,7 +71,49 @@ _MAX_OUTPUT_RETRIES = 2
 
 def _tool_defs(schema: Optional[Type[BaseModel]],
                registry: Optional[dict] = None) -> List[dict]:
+    """Build the OpenAI-style tool schema list offered to the model.
+
+    Parameters
+    ----------
+    schema : Type[BaseModel], optional
+        Pydantic model describing the required final output. When given, its
+        JSON schema becomes the `output` parameter of `finish`. Default is
+        None, which leaves `finish` output free-form.
+    registry : dict, optional
+        Extra tools by name, each exposing a `schema()` method, appended
+        after the built-in tools. Default is None.
+
+    Returns
+    -------
+    List[dict]
+        Tool definitions in function-calling format: the fixed verbs (act,
+        press, navigate, observe, ask_human, finish) plus registry tools.
+
+    Notes
+    -----
+    The model sees a uniform toolset and never picks drivers; fallback is
+    mechanical in the World. Tool calls must reach the model as real
+    tool_calls, so these definitions are the only contract it is given.
+    """
     def tool(name: str, desc: str, props: dict, required: List[str]) -> dict:
+        """Assemble one function-calling tool definition.
+
+        Parameters
+        ----------
+        name : str
+            Tool name as the model will call it.
+        desc : str
+            Human-readable description shown to the model.
+        props : dict
+            JSON schema properties for the tool's parameters.
+        required : List[str]
+            Names of the required parameters.
+
+        Returns
+        -------
+        dict
+            A single tool definition in function-calling format.
+        """
         return {
             "type": "function",
             "function": {
@@ -89,7 +131,7 @@ def _tool_defs(schema: Optional[Type[BaseModel]],
             "kind": {"type": "string", "enum": ["click", "fill", "select", "scroll"]},
             "ref": {"type": "integer",
                     "description": "PREFERRED: the [number] of an element from the "
-                                   "observation. Exact — no name guessing."},
+                                   "observation. Exact, with no name guessing."},
             "target": {"type": "string",
                        "description": "fallback when no ref fits: natural-language "
                                       "element description"},
@@ -127,8 +169,28 @@ _QUERY_MAX_HITS = 5
 
 
 def _render_elements(obs: Observation, limit: int) -> List[str]:
-    """Render elements with their ref index — the model points at a ref
-    instead of re-describing an element we already showed it."""
+    """Render an observation's elements with their ref indices.
+
+    Parameters
+    ----------
+    obs : Observation
+        Observation whose elements are rendered.
+    limit : int
+        Maximum number of elements to render before eliding the rest.
+
+    Returns
+    -------
+    List[str]
+        Rendered lines, starting with a header and ending with an elision
+        notice when elements were dropped.
+
+    Notes
+    -----
+    Elements carry their ref index so the model points at a ref instead of
+    re-describing an element we already showed it. The elision notice states
+    exactly how much more exists, since observation detail is model-controlled
+    within loop-owned ceilings and the model needs to know what it can ask for.
+    """
     lines = ["elements (act on one with ref=<number>):"]
     for i, e in enumerate(obs.elements[:limit]):
         val = f" value={e.value!r}" if e.value is not None else ""
@@ -142,26 +204,71 @@ def _render_elements(obs: Observation, limit: int) -> List[str]:
         lines.append(f"[{i}] {e.role} {e.name!r}{hint}{val}{flags}")
     if len(obs.elements) > limit:
         lines.append(
-            f"[... {len(obs.elements) - limit} more elements elided — "
+            f"[... {len(obs.elements) - limit} more elements elided, "
             "observe(detail='elements') for all]"
         )
     return lines
 
 
 def _render_text(obs: Observation, offset: int, limit: int) -> List[str]:
+    """Render one page of an observation's visible text.
+
+    Parameters
+    ----------
+    obs : Observation
+        Observation whose visible text is paged.
+    offset : int
+        Character offset to start from. Clamped into the valid range.
+    limit : int
+        Maximum number of characters to include in this page.
+
+    Returns
+    -------
+    List[str]
+        A header line naming the character range, the text chunk, and a
+        continuation notice when more text remains.
+
+    Notes
+    -----
+    Observation detail is model-controlled within loop-owned ceilings: the
+    model chooses the offset, the loop caps the page size. The continuation
+    notice spells out the next offset so paging never requires guessing.
+    """
     total = len(obs.text)
     offset = max(0, min(offset, total))
     chunk = obs.text[offset:offset + limit]
     lines = [f"visible text (chars {offset}-{offset + len(chunk)} of {total}):", chunk]
     if offset + len(chunk) < total:
         lines.append(
-            f"[... {total - offset - len(chunk)} more chars — "
+            f"[... {total - offset - len(chunk)} more chars, "
             f"observe(detail='text', offset={offset + len(chunk)}) for the next page]"
         )
     return lines
 
 
 def _render_query(obs: Observation, query: str) -> List[str]:
+    """Render windows of visible text surrounding matches of a query.
+
+    Parameters
+    ----------
+    obs : Observation
+        Observation whose visible text is searched.
+    query : str
+        Substring to search for, matched case-insensitively.
+
+    Returns
+    -------
+    List[str]
+        A header line plus one snippet per match, or a single line reporting
+        no matches and the total text length.
+
+    Notes
+    -----
+    Both the number of hits and the window around each are bounded by
+    loop-owned ceilings: observation detail is model-controlled, but the
+    totals belong to the loop. Reporting the total character count on a miss
+    lets the model tell "not present" from "not yet paged in".
+    """
     text, needle = obs.text, query.lower()
     hits, start = [], 0
     while len(hits) < _QUERY_MAX_HITS:
@@ -178,6 +285,34 @@ def _render_query(obs: Observation, query: str) -> List[str]:
 
 def _render(obs: Observation, detail: str = "summary", offset: int = 0,
             query: Optional[str] = None) -> str:
+    """Render an observation as the text block shown to the model.
+
+    Parameters
+    ----------
+    obs : Observation
+        Observation to render.
+    detail : str, optional
+        Detail level: "summary", "text", "elements" or "full". Unknown values
+        fall through to the summary rendering. Default is "summary".
+    offset : int, optional
+        Character offset into the visible text, used with detail "text".
+        Default is 0.
+    query : str, optional
+        When given, overrides `detail` and renders the element list plus text
+        around matches of this string. Default is None.
+
+    Returns
+    -------
+    str
+        The rendered observation, newline joined.
+
+    Notes
+    -----
+    Observation detail is model-controlled within loop-owned ceilings: the
+    model asks for a level, the module constants cap what any level can
+    return. The header always carries the content hash so the model can tell
+    a fresh observation from a repeat of one it already has.
+    """
     lines = [
         f"[observation {obs.content_hash}] surface={obs.surface} kind={obs.kind}",
         f"title: {obs.title}",
@@ -214,6 +349,42 @@ async def run(
     timeout: Optional[float] = None,
     tools: Optional[dict] = None,
 ) -> RunResult:
+    """Run one task to completion, with an optional wall-clock timeout.
+
+    Parameters
+    ----------
+    task : str
+        Natural-language description of the task to complete.
+    world : World
+        The World providing perception, action and the step budget.
+    llm : LLM
+        Model client used for every think step.
+    schema : Type[BaseModel], optional
+        Pydantic model the final output must validate against. Default is
+        None, which accepts free-form output.
+    max_steps : int, optional
+        Overrides the World's step budget when given. Default is None.
+    guidance : str, optional
+        Extra user guidance appended to the task message. Default is None.
+    timeout : float, optional
+        Wall-clock timeout in seconds for the whole run. Default is None,
+        meaning no timeout.
+    tools : dict, optional
+        Extra tools by name, offered alongside the built-in verbs. Default
+        is None.
+
+    Returns
+    -------
+    RunResult
+        The run outcome, including status, output, steps used and journal. On
+        timeout the status is TIMEOUT and the timeout is journalled.
+
+    Notes
+    -----
+    This wrapper owns only budget override and timeout; the loop itself lives
+    in `_run`. A timeout is reported as a normal result rather than raised,
+    so callers always get a journal back for the partial run.
+    """
     if max_steps is not None:
         world.max_steps = max_steps
     try:
@@ -237,6 +408,44 @@ async def _run(
     guidance: Optional[str],
     registry: Optional[dict] = None,
 ) -> RunResult:
+    """Drive the observe, think, act loop until the run ends.
+
+    Parameters
+    ----------
+    task : str
+        Natural-language description of the task to complete.
+    world : World
+        The World providing perception, action and the step budget.
+    llm : LLM
+        Model client used for every think step.
+    schema : Type[BaseModel] or None
+        Pydantic model the final output must validate against, or None to
+        accept free-form output.
+    guidance : str or None
+        Extra user guidance appended to the task message, or None.
+    registry : dict, optional
+        Extra tools by name, each exposing `schema()` and `call()`. Default
+        is None.
+
+    Returns
+    -------
+    RunResult
+        The terminal result: SUCCESS with validated output, NEEDS_HUMAN,
+        BUDGET_EXHAUSTED, or FAILED when output validation keeps failing.
+
+    Notes
+    -----
+    Tool calls go into history as real tool_calls with matching tool results.
+    Echoing a fake "[tool call] ..." text format taught the model to imitate
+    that format and stop calling functions, so a text-only reply is recorded
+    verbatim and answered with a demand for a real function call. Observation
+    detail is model-controlled within loop-owned ceilings, which is why the
+    observe verb re-renders the last observation rather than re-perceiving.
+    Output is validated strictly with retries fed back to the model, never
+    coerced; after `_MAX_OUTPUT_RETRIES` the run fails rather than returning
+    something that does not match the schema. Perception is delta-rendered:
+    full render the first time, then only changes since the last observation.
+    """
     journal = world.journal
     journal.append("run_start", task=task)
     tools = _tool_defs(schema, registry)
@@ -256,6 +465,28 @@ async def _run(
     step_idx = 0
 
     def result(status: RunStatus, output: Any = None, error: Optional[OrbitError] = None) -> RunResult:
+        """Journal the end of the run and build the terminal RunResult.
+
+        Parameters
+        ----------
+        status : RunStatus
+            Terminal status of the run.
+        output : Any, optional
+            Validated final output, when the run succeeded. Default is None.
+        error : OrbitError, optional
+            Error explaining a non-successful status. Default is None.
+
+        Returns
+        -------
+        RunResult
+            Result carrying the status, output, steps used, error and the
+            journal snapshot.
+
+        Notes
+        -----
+        Every exit path goes through here so no run can end without a
+        "run_end" entry and a complete journal.
+        """
         journal.append("run_end", status=status.value)
         return RunResult(
             status=status, output=output, steps_used=world.used,
@@ -295,7 +526,7 @@ async def _run(
         )
         if reply.tool_call is None:
             # Text-only reply: record it verbatim, demand a real function
-            # call. Never echo a fake "[tool call] ..." text format — the
+            # call. Never echo a fake "[tool call] ..." text format, since the
             # model imitates whatever the history looks like.
             if reply.text:
                 messages.append({"role": "assistant", "content": reply.text})
@@ -319,6 +550,25 @@ async def _run(
         })
 
         def tool_result(content: str) -> None:
+            """Append a tool result matching the call just made.
+
+            Parameters
+            ----------
+            content : str
+                Text result to hand back to the model for this tool call.
+
+            Returns
+            -------
+            None
+                This closure appends to the message history in place.
+
+            Notes
+            -----
+            Results are appended as real tool-role messages keyed to the
+            current `call_id`. Echoing a fake "[tool call] ..." text format
+            taught the model to imitate it and stop calling functions, so
+            every outcome (including errors) comes back through this channel.
+            """
             messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
 
         if name == "finish":
