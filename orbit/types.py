@@ -21,60 +21,169 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 class OrbitError(Exception):
-    """Base for all typed Orbit failures."""
+    """Base for all typed Orbit failures.
+
+    Every failure mode carries a stable machine-readable :attr:`code` plus
+    free-form context, so callers can branch on the code without parsing
+    the message.
+
+    Attributes
+    ----------
+    code : str
+        Stable identifier for the failure mode. Subclasses override it.
+    message : str
+        Human-readable description. Falls back to :attr:`code` when the
+        caller supplies no message.
+    context : dict
+        Arbitrary structured detail about the failure, such as the target
+        that could not be resolved.
+
+    Examples
+    --------
+    >>> err = OrbitError("something broke", surface="browser:main")
+    >>> err.code, err.context["surface"]
+    ('orbit_error', 'browser:main')
+    """
 
     code: str = "orbit_error"
 
     def __init__(self, message: str = "", **context: Any) -> None:
+        """Build the error.
+
+        Parameters
+        ----------
+        message : str, optional
+            Human-readable description. Default is the empty string, in
+            which case :attr:`code` is used as the message.
+        **context : Any
+            Structured detail attached to :attr:`context`.
+        """
         super().__init__(message or self.code)
         self.message = message or self.code
         self.context = context
 
 
 class TargetNotFound(OrbitError):
+    """No element matching the requested target exists on the surface.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"target_not_found"``.
+    """
+
     code = "target_not_found"
 
 
 class TargetObstructed(OrbitError):
-    """Element exists but is covered / invisible / disabled / off-screen."""
+    """Element exists but cannot be acted on.
+
+    Raised when the element is covered, invisible, disabled or off-screen.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"target_obstructed"``.
+    """
 
     code = "target_obstructed"
 
 
 class TargetUnresolvable(OrbitError):
-    """Whole fallback ladder exhausted for this target."""
+    """The whole fallback ladder was exhausted for this target.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"target_unresolvable"``.
+
+    Notes
+    -----
+    This is the terminal targeting failure: every rung (tree, DOM, vision,
+    keyboard) was tried and none landed the action.
+    """
 
     code = "target_unresolvable"
 
 
 class ActionHadNoEffect(OrbitError):
-    """The action API succeeded but the observed state did not change."""
+    """The action API succeeded but the observed state did not change.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"action_had_no_effect"``.
+
+    Notes
+    -----
+    A backend reporting success is not evidence that anything happened: a
+    click can be swallowed by an overlay, and the API still returns fine.
+    Effect verification diffs the surface before and after so a silently
+    lost action becomes a real failure instead of a false success.
+    """
 
     code = "action_had_no_effect"
 
 
 class SurfaceUnreadable(OrbitError):
-    """No usable perception channel for the focused surface."""
+    """No usable perception channel for the focused surface.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"surface_unreadable"``.
+    """
 
     code = "surface_unreadable"
 
 
 class BudgetExhausted(OrbitError):
+    """The run consumed its entire step budget.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"budget_exhausted"``.
+    """
+
     code = "budget_exhausted"
 
 
 class NeedsHuman(OrbitError):
-    """Agent-initiated escalation (CAPTCHA, blocked step, approval)."""
+    """Agent-initiated escalation to a person.
+
+    Raised for CAPTCHAs, logins, genuine ambiguity, or a destructive step
+    that needs approval.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"needs_human"``.
+    """
 
     code = "needs_human"
 
 
 class PolicyDenied(OrbitError):
+    """A side-effecting action was refused by :class:`~orbit.policy.Policy`.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"policy_denied"``.
+    """
+
     code = "policy_denied"
 
 
 class OutputInvalid(OrbitError):
-    """Final output failed schema validation after retries."""
+    """Final output failed schema validation after retries.
+
+    Attributes
+    ----------
+    code : str
+        Always ``"output_invalid"``.
+    """
 
     code = "output_invalid"
 

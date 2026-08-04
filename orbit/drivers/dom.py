@@ -40,6 +40,11 @@ log = logging.getLogger("orbit.drivers.dom")
 
 _TMP_PROFILE_PREFIX = "/tmp/orbit-chrome-profile-"
 _TMP_PROFILE_GLOB = "/tmp/orbit-chrome-profile-*"
+# Frame scanning bounds: an ad-heavy page can carry dozens of tracking
+# iframes, so cap both how many are scanned and how much each contributes.
+_MAX_FRAMES = 12
+_MAX_FRAME_ELEMENTS = 40
+
 _PROFILE_FILES = ("Login Data", "Login Data-journal", "Cookies", "Web Data", "Web Data-journal")
 
 # Only three rendering engines exist behind every mainstream browser, and
@@ -861,6 +866,17 @@ class DomDriver:
                 raise SurfaceUnreadable(f"DOM scan failed: {exc}") from exc
 
         elements = [_element_from_desc(d) for d in raw.get("elements", []) if d]
+        text = raw.get("text", "")
+
+        # Iframes are separate documents, so the main-frame scan cannot see
+        # into them: embedded checkouts, payment fields, editors and consent
+        # dialogs would all be invisible. Scan each child frame and translate
+        # its coordinates into page space so clicks still land.
+        frame_elements, frame_text = await self._scan_frames(page)
+        elements += frame_elements
+        if frame_text:
+            text = f"{text}\n{frame_text}" if text else frame_text
+
         # Cache for ref addressing: the model points at the index it was
         # shown rather than re-describing the element in words.
         self._last_elements = elements
@@ -871,10 +887,53 @@ class DomDriver:
             title=title,
             url=url,
             elements=elements,
-            text=raw.get("text", ""),
+            text=text,
             modal_count=int(raw.get("modal_count", 0)),
             focused_key=focused_key,
         )
+
+    async def _scan_frames(self, page: Any) -> tuple:
+        """Scan child frames, returning page-space elements and their text.
+
+        Each frame reports geometry relative to its own document, so every
+        rect is offset by the frame's position in the page. Without that
+        translation a click computed from an iframe element would land at
+        the wrong place on screen. Frames that cannot be read (detached
+        mid-scan, or still blank) are skipped rather than failing the
+        observation.
+        """
+        elements: List[Element] = []
+        texts: List[str] = []
+        try:
+            frames = [f for f in page.frames if f is not page.main_frame]
+        except Exception:
+            return elements, ""
+
+        for frame in frames[:_MAX_FRAMES]:
+            try:
+                handle = await frame.frame_element()
+                box = await handle.bounding_box()
+                if not box or box["width"] < 1 or box["height"] < 1:
+                    continue  # hidden or zero-sized frame: nothing to see
+                raw = await frame.evaluate(_SCAN_JS, _MAX_FRAME_ELEMENTS)
+            except Exception:
+                continue
+
+            dx, dy = float(box["x"]), float(box["y"])
+            for desc in raw.get("elements", []) or []:
+                if not desc:
+                    continue
+                rect = desc.get("rect")
+                if rect:
+                    for key, delta in (("x", dx), ("cx", dx), ("y", dy), ("cy", dy)):
+                        if rect.get(key) is not None:
+                            rect[key] = float(rect[key]) + delta
+                element = _element_from_desc(desc)
+                element.ref["frame_url"] = frame.url
+                elements.append(element)
+            if raw.get("text"):
+                texts.append(raw["text"])
+        return elements, "\n".join(texts)
 
     @staticmethod
     def can_navigate(target: Optional[str]) -> bool:
