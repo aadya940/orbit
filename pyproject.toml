@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orbit-cua"
-version = "0.2.47"
-description = "General computer-use agent."
+version = "2.0.0"
+description = "Automate any app — desktop or browser — with composable, typed steps."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Aadya" }]
-keywords = ["computer-use", "agent", "automation", "desktop", "adk"]
+keywords = ["computer-use", "agent", "automation", "desktop", "browser", "accessibility"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -26,27 +26,28 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
 ]
 dependencies = [
-    "google-adk==1.25.0",
-    "google-genai==1.64.0",
+    "pydantic>=2.0",
     "litellm>=1.77.7",
-    "python-dotenv>=1.0.1",
+    "requests>=2.32.5",
+    "patchright>=1.42.0",
     "pyautogui>=0.9.54",
     "pyperclip>=1.11.0",
-    "requests>=2.32.5",
-    "pdfplumber>=0.11.9",
-    "send2trash>=2.1.0",
-    "rich>=14.1.0",
     "ddgs>=9.13.0",
-    "patchright>=1.42.0",
 ]
+
+[project.optional-dependencies]
+# Firefox/WebKit are driven through a patched protocol that only stock
+# Playwright implements. Chromium-family browsers need nothing extra.
+firefox = ["playwright>=1.40"]
+webkit = ["playwright>=1.40"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
 
 [project.urls]
 Homepage = "https://github.com/aadya940/orbit"
 Repository = "https://github.com/aadya940/orbit"
 Issues = "https://github.com/aadya940/orbit/issues"
 
-[project.optional-dependencies]
-dev = ["pytest>=7.0"]
+
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -35,7 +35,7 @@ from ..types import (
     TargetObstructed,
 )
 
-log = logging.getLogger("orbit2.drivers.vision")
+log = logging.getLogger("orbit.drivers.vision")
 
 # Vision models emit boxes in a normalized 0-1000 space (Gemini convention:
 # [ymin, xmin, ymax, xmax]). We scale to real pixels ourselves.

@@ -23,7 +23,7 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).parent
-sys.path.insert(0, str(HERE.parent))  # make orbit/orbit2 importable from anywhere
+sys.path.insert(0, str(HERE.parent))  # make orbit/orbit importable from anywhere
 RESULTS = HERE / "results"
 
 
@@ -35,11 +35,11 @@ def load_tasks(tiers: list[str] | None = None) -> list[dict]:
 
 
 async def run_task_v2(task: dict, llm: str) -> dict:
-    import orbit2
+    import orbit
 
     started = time.monotonic()
     try:
-        async with orbit2.session(llm=llm, max_steps=25) as s:
+        async with orbit.session(llm=llm, max_steps=25) as s:
             if task.get("start_url"):
                 await s.navigate(task["start_url"])
             elif task.get("fixture"):

@@ -2,8 +2,8 @@ from pydantic import BaseModel
 
 from conftest import make_obs
 from fake_driver import FakeDriver, FakeLLM, FakeScreen
-from orbit2 import Session, RunStatus
-from orbit2.llm import LLMReply, ToolCall
+from orbit import Session, RunStatus
+from orbit.llm import LLMReply, ToolCall
 
 
 def tc(name, **args):

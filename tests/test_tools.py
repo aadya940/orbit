@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from orbit2.tools import (
+from orbit.tools import (
     Tool,
     append_file,
     build_registry,

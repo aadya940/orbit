@@ -2,10 +2,10 @@ from pydantic import BaseModel
 
 from conftest import make_obs
 from fake_driver import FakeDriver, FakeLLM, FakeScreen
-from orbit2 import loop
-from orbit2.llm import LLMReply, ToolCall
-from orbit2.types import RunStatus, TargetNotFound
-from orbit2.world import World
+from orbit import loop
+from orbit.llm import LLMReply, ToolCall
+from orbit.types import RunStatus, TargetNotFound
+from orbit.world import World
 
 
 def tc(name, **args):

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Union
 
-from orbit2.llm import LLMReply
-from orbit2.types import Action, Element, Observation, OrbitError
+from orbit.llm import LLMReply
+from orbit.types import Action, Element, Observation, OrbitError
 
 Behavior = Union[str, OrbitError]  # "ok" | "noop" | error to raise
 

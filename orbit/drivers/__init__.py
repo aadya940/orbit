@@ -1,6 +1,6 @@
 """Driver backends for Orbit v2.
 
-Exports are lazy so ``import orbit2`` works with zero optional deps
+Exports are lazy so ``import orbit`` works with zero optional deps
 installed (playwright/patchright, requests, pyautogui are all imported
 only inside driver methods).
 """
@@ -30,10 +30,10 @@ __all__ = [
 ]
 
 _LAZY = {
-    "DomDriver": ("orbit2.drivers.dom", "DomDriver"),
-    "AccessibilityDriver": ("orbit2.drivers.accessibility", "AccessibilityDriver"),
-    "KeyboardDriver": ("orbit2.drivers.keyboard", "KeyboardDriver"),
-    "VisionDriver": ("orbit2.drivers.vision", "VisionDriver"),
+    "DomDriver": ("orbit.drivers.dom", "DomDriver"),
+    "AccessibilityDriver": ("orbit.drivers.accessibility", "AccessibilityDriver"),
+    "KeyboardDriver": ("orbit.drivers.keyboard", "KeyboardDriver"),
+    "VisionDriver": ("orbit.drivers.vision", "VisionDriver"),
 }
 
 

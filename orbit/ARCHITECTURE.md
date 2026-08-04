@@ -22,7 +22,7 @@ data (probe cache entries), not code branches or prompt rules.
 ## Layout
 
 ```
-orbit2/
+orbit/
 ├── types.py          # Element/Observation/StateDiff/ActionResult/RunResult + error taxonomy
 ├── world.py          # per-session container — replaces every v1 global
 ├── loop.py           # owned observe→decide→act loop (no ADK)
@@ -44,9 +44,9 @@ orbit2/
 ## Public API
 
 ```python
-import orbit2
+import orbit
 
-async with orbit2.session(llm="gemini-3-pro-preview") as s:
+async with orbit.session(llm="gemini-3-pro-preview") as s:
     await s.navigate("https://news.ycombinator.com")
     stories = await s.read("top 5 stories", schema=StoryList)
     if await s.check("a login button is visible"):

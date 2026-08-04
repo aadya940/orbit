@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel
 
 from conftest import make_obs
-from orbit2.types import OutputInvalid, diff_observations, validate_output
+from orbit.types import OutputInvalid, diff_observations, validate_output
 
 
 def test_diff_appear_disappear():

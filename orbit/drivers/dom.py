@@ -36,10 +36,10 @@ from ..types import (
 from .base import is_web_target
 from .matching import parse_description
 
-log = logging.getLogger("orbit2.drivers.dom")
+log = logging.getLogger("orbit.drivers.dom")
 
-_TMP_PROFILE_PREFIX = "/tmp/orbit2-chrome-profile-"
-_TMP_PROFILE_GLOB = "/tmp/orbit2-chrome-profile-*"
+_TMP_PROFILE_PREFIX = "/tmp/orbit-chrome-profile-"
+_TMP_PROFILE_GLOB = "/tmp/orbit-chrome-profile-*"
 _PROFILE_FILES = ("Login Data", "Login Data-journal", "Cookies", "Web Data", "Web Data-journal")
 
 # Only three rendering engines exist behind every mainstream browser, and

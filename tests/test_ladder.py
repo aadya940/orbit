@@ -2,8 +2,8 @@ import pytest
 
 from conftest import make_obs
 from fake_driver import FakeDriver, FakeScreen
-from orbit2.drivers.base import run_ladder
-from orbit2.types import Action, ActionKind, TargetNotFound, TargetUnresolvable
+from orbit.drivers.base import run_ladder
+from orbit.types import Action, ActionKind, TargetNotFound, TargetUnresolvable
 
 CLICK = Action(kind=ActionKind.CLICK, target="Save")
 

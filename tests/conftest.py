@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from orbit2.types import Element, Observation
+from orbit.types import Element, Observation
 
 
 def make_obs(*names, url=None, title="page", modal_count=0, focused_key=None,

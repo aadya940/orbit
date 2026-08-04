@@ -22,6 +22,7 @@ import atexit
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -42,16 +43,28 @@ from ..types import (
 from .base import is_web_target
 from .matching import best_match, rank_matches, suggestions
 
-log = logging.getLogger("orbit2.drivers.accessibility")
+log = logging.getLogger("orbit.drivers.accessibility")
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:7878"
 
 
 def _default_binary_path() -> Path:
-    """Default to the oculos binary bundled with the v1 orbit package."""
-    repo_root = Path(__file__).resolve().parents[2]
+    """Locate the bundled OculOS binary.
+
+    Package-relative first (how it ships), then an installed sibling
+    package, then PATH — so a source checkout, a wheel install and a
+    system install all work without configuration.
+    """
     name = "oculos.exe" if os.name == "nt" else "oculos"
-    return repo_root / "orbit" / "_bin" / name
+    package_bin = Path(__file__).resolve().parents[1] / "_bin" / name
+    if package_bin.exists():
+        return package_bin
+    for parent in Path(__file__).resolve().parents[2:4]:
+        candidate = parent / "orbit" / "_bin" / name
+        if candidate.exists():
+            return candidate
+    found = shutil.which(name)
+    return Path(found) if found else package_bin
 
 
 def _kill_pid(pid: Optional[int]) -> None:

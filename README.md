@@ -23,7 +23,7 @@ pip install orbit-cua
 
 ```python
 from pydantic import BaseModel
-import orbit2 as orbit
+import orbit
 
 class Stories(BaseModel):
     titles: list[str]
@@ -64,7 +64,7 @@ Files (`read_file`, `write_file`, `read_csv`, `write_csv`, `find_files`), code (
 ## Bring your own tools
 
 ```python
-from orbit2.tools import tool
+from orbit.tools import tool
 
 @tool("post_to_slack", "Send a message to Slack", {"text": {"type": "string"}})
 async def post_to_slack(text: str) -> str:
@@ -111,8 +111,10 @@ Results are typed: `result.ok`, `result.output`, `result.status`, `result.steps_
 
 ## Learn more
 
-- [`examples/`](examples/) for full workflows
-- [`docs/`](docs/) for the SDK reference and platform support (Windows, Linux, macOS, Python 3.10+)
+- [`example.py`](example.py) — every feature in one file, runnable
+- [`examples/`](examples/) — full end-to-end workflows
+
+Windows, Linux and macOS · Python 3.10+
 
 Respect the terms of service of whatever you automate.
 

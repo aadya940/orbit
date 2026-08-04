@@ -1,4 +1,4 @@
-"""Tests for orbit2.drivers: lazy-import discipline, protocol conformance,
+"""Tests for orbit.drivers: lazy-import discipline, protocol conformance,
 and the pure fuzzy target matcher."""
 
 from __future__ import annotations
@@ -8,14 +8,14 @@ import sys
 
 import pytest
 
-from orbit2.drivers.matching import (
+from orbit.drivers.matching import (
     best_match,
     parse_description,
     rank_matches,
     score_element,
     suggestions,
 )
-from orbit2.types import Element
+from orbit.types import Element
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ for m in list(sys.modules):
         del sys.modules[m]
 sys.meta_path.insert(0, _Blocker())
 
-import orbit2.drivers as d
+import orbit.drivers as d
 drv = d.default_drivers()
 assert set(drv) == {"dom", "tree", "keyboard", "vision"}, drv
 # Accessing lazy exports must also work without optional deps installed.
@@ -51,7 +51,7 @@ print("OK")
 
 
 def test_import_without_optional_deps():
-    """orbit2.drivers imports and instantiates with zero optional deps."""
+    """orbit.drivers imports and instantiates with zero optional deps."""
     proc = subprocess.run(
         [sys.executable, "-c", _LAZY_IMPORT_SCRIPT],
         capture_output=True,
@@ -62,7 +62,7 @@ def test_import_without_optional_deps():
 
 
 def test_default_drivers_returns_four():
-    from orbit2.drivers import default_drivers
+    from orbit.drivers import default_drivers
 
     drivers = default_drivers()
     assert set(drivers) == {"dom", "tree", "keyboard", "vision"}
@@ -71,7 +71,7 @@ def test_default_drivers_returns_four():
 
 
 def test_drivers_satisfy_protocol():
-    from orbit2.drivers import Driver, default_drivers
+    from orbit.drivers import Driver, default_drivers
 
     for driver in default_drivers().values():
         assert isinstance(driver, Driver), driver
@@ -180,7 +180,7 @@ def test_pure_role_query_matches_role_only():
 # -- browser selection -------------------------------------------------------
 
 def test_engine_derived_not_enumerated():
-    from orbit2.drivers.dom import engine_for
+    from orbit.drivers.dom import engine_for
     # Only three engines exist; everything not Firefox/WebKit is Chromium.
     assert engine_for("firefox") == "firefox"
     assert engine_for("safari") == "webkit"
@@ -191,7 +191,7 @@ def test_engine_derived_not_enumerated():
 
 
 def test_binary_lookup_uses_path_not_hardcoded_locations(monkeypatch):
-    from orbit2.drivers import dom
+    from orbit.drivers import dom
     seen = []
 
     def fake_which(name):
@@ -205,10 +205,10 @@ def test_binary_lookup_uses_path_not_hardcoded_locations(monkeypatch):
 
 
 def test_chromium_prefers_system_binary_firefox_requires_bundled(monkeypatch):
-    from orbit2.drivers.dom import DomDriver
+    from orbit.drivers.dom import DomDriver
 
     monkeypatch.setattr(
-        "orbit2.drivers.dom.find_browser_binary",
+        "orbit.drivers.dom.find_browser_binary",
         lambda b: f"/usr/bin/{b}",
     )
     # Chromium family: any installed build works (standard CDP).
@@ -220,6 +220,6 @@ def test_chromium_prefers_system_binary_firefox_requires_bundled(monkeypatch):
 
 
 def test_explicit_executable_path_always_wins(monkeypatch):
-    from orbit2.drivers.dom import DomDriver
+    from orbit.drivers.dom import DomDriver
     d = DomDriver(browser="firefox", executable_path="/custom/ff")
     assert d._executable_path == "/custom/ff"

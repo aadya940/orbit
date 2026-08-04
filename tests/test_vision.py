@@ -2,13 +2,13 @@
 
 import pytest
 
-from orbit2.drivers.vision import (
+from orbit.drivers.vision import (
     VisionDriver,
     box_to_bounds,
     elements_from_grounding,
     parse_grounding,
 )
-from orbit2.types import Action, ActionKind, Source, SurfaceUnreadable, TargetNotFound
+from orbit.types import Action, ActionKind, Source, SurfaceUnreadable, TargetNotFound
 
 
 # -- parse_grounding ---------------------------------------------------------

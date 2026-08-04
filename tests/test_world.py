@@ -2,8 +2,8 @@ import pytest
 
 from conftest import make_obs
 from fake_driver import FakeDriver, FakeScreen
-from orbit2.types import Action, ActionKind, BudgetExhausted, Observation, Element
-from orbit2.world import World
+from orbit.types import Action, ActionKind, BudgetExhausted, Observation, Element
+from orbit.world import World
 
 
 def simple_world(max_steps=5):
@@ -48,7 +48,7 @@ async def test_probe_reorders_by_score():
 class _BlindDriver(FakeDriver):
     """Perception-incapable driver (like keyboard/vision): observe raises."""
     async def observe(self):
-        from orbit2.types import SurfaceUnreadable
+        from orbit.types import SurfaceUnreadable
         raise SurfaceUnreadable(f"{self.name} cannot perceive")
 
 
@@ -76,7 +76,7 @@ def test_navigator_dispatch_by_capability():
         "dom": FakeDriver([make_obs("x")], name="dom"),
         "tree": FakeDriver([make_obs("y")], name="tree"),
     })
-    from orbit2.drivers.base import is_web_target
+    from orbit.drivers.base import is_web_target
 
     class _NavDom(FakeDriver):
         @staticmethod
@@ -133,13 +133,13 @@ async def test_navigate_switches_primary_across_surfaces():
     class _NavDom(FakeDriver):
         @staticmethod
         def can_navigate(t):
-            from orbit2.drivers.base import is_web_target
+            from orbit.drivers.base import is_web_target
             return is_web_target(t)
 
     class _NavTree(FakeDriver):
         @staticmethod
         def can_navigate(t):
-            from orbit2.drivers.base import is_web_target
+            from orbit.drivers.base import is_web_target
             return bool(t) and not is_web_target(t)
 
     world = World(drivers={
@@ -158,7 +158,7 @@ async def test_focus_persists_across_verbs():
     # app — not re-pick the browser just because it still "sees" its page.
     page = make_obs("Sign in", "Search", "Repositories", "Issues", "Pulls")
     app = make_obs("File", "Edit", "Untitled document", "Save", "Open")
-    from orbit2.drivers.base import is_web_target
+    from orbit.drivers.base import is_web_target
 
     class _Dom(FakeDriver):
         surface = "web"

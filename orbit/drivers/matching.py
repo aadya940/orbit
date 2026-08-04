@@ -1,6 +1,6 @@
 """Pure fuzzy target matching shared by all drivers.
 
-Given a list of :class:`~orbit2.types.Element` and a natural-language
+Given a list of :class:`~orbit.types.Element` and a natural-language
 target description ("the login button", "Email address field"), return
 ranked matches. No I/O — fully unit-testable.
 

@@ -7,14 +7,14 @@ save them as CSV" is one run instead of two.
 
 Adding your own is a decorator and a function:
 
-    from orbit2.tools import tool
+    from orbit.tools import tool
 
     @tool("send_slack", "Post a message to Slack", {"text": {"type": "string"}})
     async def send_slack(text: str) -> str:
         ...
         return "sent"
 
-    async with orbit2.session(tools=[send_slack]) as s: ...
+    async with orbit.session(tools=[send_slack]) as s: ...
 
 Every tool returns a string (what the model sees). Raising is fine —
 the error text goes back to the model, which can adapt.
