@@ -45,6 +45,59 @@ async def test_probe_reorders_by_score():
     assert "s" in world.probe_cache
 
 
+class _BlindDriver(FakeDriver):
+    """Perception-incapable driver (like keyboard/vision): observe raises."""
+    async def observe(self):
+        from orbit2.types import SurfaceUnreadable
+        raise SurfaceUnreadable(f"{self.name} cannot perceive")
+
+
+async def test_auto_route_falls_through_unusable_driver():
+    # Even hinted toward dom, a blank/poor dom surface is unusable, so
+    # routing falls through to the tree driver that actually sees content.
+    poor = Observation(surface="browser", kind="browser",
+                       elements=[Element(role="generic", name="")])
+    rich = make_obs("7", "8", "×", "=", "C", "Clear")
+    world = World(drivers={
+        "dom": FakeDriver([poor], name="dom"),
+        "tree": FakeDriver([rich], name="tree"),
+        "keyboard": _BlindDriver([poor], name="keyboard"),
+    })  # no primary -> auto_route
+    world._surface_hint = "web"             # hint prefers dom first...
+    obs = await world.observe()
+    assert world.primary == "tree"          # ...but dom is unusable -> tree
+    assert obs.elements[0].name == "7"
+    assert world.ladder_order[0] == "tree"  # ladder reordered behind it
+
+
+async def test_explicit_primary_disables_auto_route():
+    rich = make_obs("A", "B", "C", "D", "E")
+    world = World(drivers={
+        "dom": FakeDriver([make_obs("only")], name="dom"),
+        "tree": FakeDriver([rich], name="tree"),
+    }, primary="dom")
+    assert world.auto_route is False
+    await world.observe()
+    assert world.primary == "dom"           # respected, never re-routed
+
+
+async def test_navigate_then_route():
+    # Before opening anything, observe yields an empty surface (no probing).
+    # A navigate opens the app and defers routing to the next observe.
+    window = make_obs("File", "Edit", "View", "Save", "Open")
+    world = World(drivers={
+        "tree": FakeDriver(FakeScreen([window, window]), name="tree"),
+    })
+    obs = await world.observe()
+    assert obs.kind == "none"               # nothing open yet, no probe-launch
+    await world.act(Action(kind=ActionKind.NAVIGATE, value="app:editor"))
+    assert world._surface_hint == "native"  # app name classified as native
+    assert world._routed is False           # routing deferred to next observe
+    obs = await world.observe()
+    assert world._routed is True            # now routed against the real app
+    assert world.primary == "tree"
+
+
 def test_worlds_are_isolated():
     w1, _ = simple_world()
     w2, _ = simple_world()

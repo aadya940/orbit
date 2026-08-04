@@ -635,7 +635,7 @@ class DomDriver:
         """
         async with self._lock:
             if self._playwright is not None:
-                raise RuntimeError("DomDriver.start() called while already running")
+                return  # idempotent: already running
             if purge_stale:
                 for stale in glob.glob(_TMP_PROFILE_GLOB):
                     shutil.rmtree(stale, ignore_errors=True)

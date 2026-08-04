@@ -25,7 +25,7 @@ import platform
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from ..types import (
     Action,
@@ -51,6 +51,20 @@ def _default_binary_path() -> Path:
     repo_root = Path(__file__).resolve().parents[2]
     name = "oculos.exe" if os.name == "nt" else "oculos"
     return repo_root / "orbit" / "_bin" / name
+
+
+def _kill_pid(pid: Optional[int]) -> None:
+    """SIGTERM then SIGKILL a real process id (fallback when the daemon's
+    window-close is unavailable, e.g. xdotool not installed)."""
+    if not pid:
+        return
+    import signal
+    try:
+        os.kill(int(pid), signal.SIGTERM)
+        time.sleep(0.3)
+        os.kill(int(pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, ValueError):
+        pass
 
 
 class OculOSError(OrbitError):
@@ -302,12 +316,20 @@ class AccessibilityDriver:
         base_url: str = _DEFAULT_BASE_URL,
         binary_path: Optional[str] = None,
         auto_start_daemon: bool = True,
+        close_launched: bool = True,
     ) -> None:
         self.client = OculOSClient(base_url=base_url)
         self.daemon = OculOSDaemon(binary_path=binary_path, base_url=base_url)
         self._auto_start_daemon = auto_start_daemon
         self._started = False
         self._target_exe: Optional[str] = None
+        # Exe names this driver launched via navigate. Closed on stop() via
+        # the daemon's window-close (killing the launcher Popen is useless
+        # for D-Bus-activated GNOME apps, which hand off to a session
+        # service and exit).
+        self._launched: List[subprocess.Popen] = []
+        self._launched_exes: Set[str] = set()
+        self._close_launched = close_launched
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -330,6 +352,30 @@ class AccessibilityDriver:
         self._started = True
 
     async def stop(self) -> None:
+        if self._close_launched and self._launched_exes:
+            # Find the real PIDs of windows we launched (the launcher Popen
+            # is useless for D-Bus-activated apps). Prefer a graceful window
+            # -close via the daemon; if that's unavailable (e.g. no xdotool),
+            # signal the actual process the daemon reports.
+            try:
+                for w in self.client.list_windows():
+                    exe = str(w.get("exe_name", "")).lower()
+                    pid = w.get("pid")
+                    if not any(name in exe or exe in name for name in self._launched_exes):
+                        continue
+                    try:
+                        self.client.close_window(pid)
+                    except Exception:
+                        _kill_pid(pid)
+            except Exception:
+                pass
+        for proc in self._launched:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        self._launched.clear()
+        self._launched_exes.clear()
         self.daemon.stop()
         self._started = False
 
@@ -645,19 +691,20 @@ class AccessibilityDriver:
         # Remember what we launched so observation targets this app's
         # window, not whatever the window list happens to lead with.
         self._target_exe = os.path.basename(app_name.split()[0]).lower()
+        self._launched_exes.add(self._target_exe)
         system = platform.system()
         if system == "Windows":
             try:
                 os.startfile(app_name)  # type: ignore[attr-defined]
             except (FileNotFoundError, OSError):
-                subprocess.Popen(f"start {app_name}", shell=True)
+                self._launched.append(subprocess.Popen(f"start {app_name}", shell=True))
         elif system == "Darwin":
-            subprocess.Popen(["open", "-a", app_name])
+            self._launched.append(subprocess.Popen(["open", "-a", app_name]))
         else:
             flags, env_vars = _launch_flags(app_name)
             cmd = f"{app_name} {flags}".strip() if flags else app_name
             env = {**os.environ, **env_vars}
-            subprocess.Popen(cmd, shell=True, env=env)
+            self._launched.append(subprocess.Popen(cmd, shell=True, env=env))
 
     def _press_keys(self, chord: str) -> None:
         pyautogui = self._try_pyautogui()

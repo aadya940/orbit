@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
 
 from ..types import (
     Action,
@@ -101,6 +101,7 @@ async def run_ladder(
     action: Action,
     observe_via: Driver,
     max_rounds: int = 1,
+    ensure: Optional[Any] = None,
 ) -> LadderOutcome:
     """The fallback ladder with built-in effect verification.
 
@@ -120,6 +121,8 @@ async def run_ladder(
             attempts += 1
             start = time.monotonic()
             try:
+                if ensure is not None:
+                    await ensure(driver.name)  # start this rung only now
                 element = await driver.act(action)
             except OrbitError as exc:
                 # Any typed failure from a backend is a failed rung to

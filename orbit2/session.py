@@ -50,17 +50,23 @@ class Session:
         self.policy = policy or Policy()
         self.max_steps = max_steps
         self._drivers = drivers
+        # Shared across verbs: which backends are started + last surface
+        # hint. Drivers start lazily (on first use) so a native-only task
+        # never launches a browser, and a web-only task never starts the
+        # accessibility daemon.
+        self._runtime: Dict[str, Any] = {}
 
     async def __aenter__(self) -> "Session":
         if self._drivers is None:
             self._drivers = _default_drivers()
-        for driver in self._drivers.values():
-            await _call_if_present(driver, "start")
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        for driver in (self._drivers or {}).values():
-            await _call_if_present(driver, "stop", "close")
+        # Only stop backends that were actually started.
+        started = self._runtime.get("started", set())
+        for name, driver in (self._drivers or {}).items():
+            if name in started:
+                await _call_if_present(driver, "stop", "close")
 
     # -- internals ---------------------------------------------------------
     def _world(self, max_steps: Optional[int]) -> World:
@@ -70,6 +76,7 @@ class Session:
             drivers=self._drivers,
             policy=self.policy,
             max_steps=max_steps if max_steps is not None else self.max_steps,
+            runtime=self._runtime,
         )
 
     async def _run(
