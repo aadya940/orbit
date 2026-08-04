@@ -46,12 +46,13 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def default_drivers() -> Dict[str, "Driver"]:
+def default_drivers(browser: str = "chrome") -> Dict[str, "Driver"]:
     """Instantiate (but do not start) the standard driver set, keyed by name."""
     from .accessibility import AccessibilityDriver
     from .dom import DomDriver
     from .keyboard import KeyboardDriver
     from .vision import VisionDriver
 
-    drivers = [DomDriver(), AccessibilityDriver(), KeyboardDriver(), VisionDriver()]
+    drivers = [DomDriver(browser=browser), AccessibilityDriver(),
+               KeyboardDriver(), VisionDriver()]
     return {d.name: d for d in drivers}

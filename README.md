@@ -75,6 +75,17 @@ async with orbit.session(llm="gemini/gemini-3.6-flash", tools=[post_to_slack]) a
     await s.do("summarize this dashboard and post it to Slack")
 ```
 
+## Any browser
+
+```python
+async with orbit.session(llm="gemini/gemini-3.6-flash", browser="firefox") as s:
+    ...
+```
+
+`chrome` (default), `edge`, `brave`, `opera`, `vivaldi`, `chromium`, `firefox`, `webkit`.
+Chromium-based browsers use whatever you already have installed; Firefox and
+WebKit need `pip install playwright && playwright install firefox`.
+
 ## Simplest possible use
 
 ```python

@@ -16,10 +16,10 @@ from .world import World
 DEFAULT_MODEL = "gpt-4o"
 
 
-def _default_drivers() -> Dict[str, Any]:
+def _default_drivers(browser: str = "chrome") -> Dict[str, Any]:
     try:
         from .drivers import default_drivers
-        return default_drivers()
+        return default_drivers(browser=browser)
     except ImportError as exc:
         raise ImportError(
             "Default Orbit drivers are not available in this build. "
@@ -47,11 +47,13 @@ class Session:
         drivers: Optional[Dict[str, Any]] = None,
         tools: Optional[list] = None,
         include_default_tools: bool = True,
+        browser: str = "chrome",
     ) -> None:
         self.llm: LLM = LiteLLMClient(llm) if isinstance(llm, str) else llm
         self.policy = policy or Policy()
         self.max_steps = max_steps
         self._drivers = drivers
+        self._browser = browser
         from .tools import build_registry
         self._tools = build_registry(tools, include_defaults=include_default_tools)
         # Shared across verbs: which backends are started + last surface
@@ -62,7 +64,7 @@ class Session:
 
     async def __aenter__(self) -> "Session":
         if self._drivers is None:
-            self._drivers = _default_drivers()
+            self._drivers = _default_drivers(browser=self._browser)
         # Vision grounds with the session's model unless it was given one.
         for driver in self._drivers.values():
             inject = getattr(driver, "set_llm", None)
@@ -80,7 +82,7 @@ class Session:
     # -- internals ---------------------------------------------------------
     def _world(self, max_steps: Optional[int]) -> World:
         if self._drivers is None:
-            self._drivers = _default_drivers()
+            self._drivers = _default_drivers(browser=self._browser)
         return World(
             drivers=self._drivers,
             policy=self.policy,

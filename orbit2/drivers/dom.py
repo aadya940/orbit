@@ -42,6 +42,52 @@ _TMP_PROFILE_PREFIX = "/tmp/orbit2-chrome-profile-"
 _TMP_PROFILE_GLOB = "/tmp/orbit2-chrome-profile-*"
 _PROFILE_FILES = ("Login Data", "Login Data-journal", "Cookies", "Web Data", "Web Data-journal")
 
+# Only three rendering engines exist behind every mainstream browser, and
+# Playwright exposes exactly those. Everything that isn't Firefox or
+# WebKit is a Chromium fork (Edge, Brave, Opera, Vivaldi, Arc...), so the
+# engine is derived, not enumerated — and the binary comes from the OS's
+# own PATH lookup rather than a table of guessed install locations.
+_FIREFOX_NAMES = {"firefox", "ff", "mozilla"}
+_WEBKIT_NAMES = {"webkit", "safari", "epiphany"}
+
+# Firefox rejects Chrome's flags; it needs prefs instead. Accessibility is
+# force-enabled the same way, just through a different door.
+_FIREFOX_PREFS = {
+    "accessibility.force_disabled": 0,
+    "devtools.accessibility.enabled": True,
+}
+
+
+def engine_for(browser: str) -> str:
+    """Playwright engine that drives this browser."""
+    b = (browser or "chrome").strip().lower()
+    if b in _FIREFOX_NAMES:
+        return "firefox"
+    if b in _WEBKIT_NAMES:
+        return "webkit"
+    return "chromium"
+
+
+def find_browser_binary(browser: str) -> Optional[str]:
+    """Locate a browser on PATH. Asks the OS instead of guessing paths;
+    tries the common packaging suffixes for the same name."""
+    import shutil
+
+    b = (browser or "").strip().lower()
+    if not b:
+        return None
+    candidates = [b, f"{b}-browser", f"{b}-stable", f"{b}-browser-stable"]
+    if b == "chrome":
+        candidates = ["google-chrome", "google-chrome-stable", *candidates]
+    elif b == "edge":
+        candidates = ["microsoft-edge", "microsoft-edge-stable", *candidates]
+    for name in candidates:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
 _CHROME_FLAGS = [
     "--force-renderer-accessibility",
     "--enable-accessibility",
@@ -52,19 +98,27 @@ _CHROME_FLAGS = [
 ]
 
 
-def _async_playwright():
-    """Lazy import: prefer patchright (stealth-patched), fall back to playwright."""
-    try:
-        from patchright.async_api import async_playwright  # type: ignore
-    except ImportError:
+def _async_playwright(engine: str = "chromium"):
+    """Lazy import of the driver library.
+
+    Patchright only stealth-patches Chromium, so non-Chromium engines use
+    stock Playwright; Chromium prefers Patchright when it is installed.
+    """
+    # Chromium may use either library. Firefox/WebKit must use stock
+    # Playwright: Patchright's CDP-based patches break on them (page
+    # evaluation fails with a cryptic '_client' error), so we refuse it
+    # here rather than failing deep inside a run.
+    order = ["patchright", "playwright"] if engine == "chromium" else ["playwright"]
+    for module in order:
         try:
-            from playwright.async_api import async_playwright  # type: ignore
-        except ImportError as exc:
-            raise SurfaceUnreadable(
-                "Neither patchright nor playwright is installed. "
-                "Run: pip install patchright && patchright install chromium"
-            ) from exc
-    return async_playwright
+            mod = __import__(f"{module}.async_api", fromlist=["async_playwright"])
+            return mod.async_playwright
+        except ImportError:
+            continue
+    raise SurfaceUnreadable(
+        f"The {engine!r} engine needs stock Playwright. "
+        f"Run: pip install playwright && playwright install {engine}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -604,19 +658,21 @@ class DomDriver:
     def __init__(
         self,
         *,
+        browser: str = "chrome",
         persistent_profile: Optional[str] = None,
         executable_path: Optional[str] = None,
         headless: bool = False,
     ) -> None:
         self._persistent_profile = persistent_profile
-        if executable_path is None:
-            # Prefer a system Chrome over patchright's bundled Chromium,
-            # which is typically not downloaded.
-            for candidate in ("/usr/bin/google-chrome", "/usr/bin/chromium",
-                              "/usr/bin/chromium-browser"):
-                if os.path.exists(candidate):
-                    executable_path = candidate
-                    break
+        self._browser = (browser or "chrome").strip().lower()
+        self._engine = engine_for(self._browser)
+        # Chromium-family browsers speak standard CDP, so any installed
+        # build works and a system binary beats the (often absent) bundled
+        # one. Firefox/WebKit are driven through a patched protocol and
+        # ONLY work with the driver's own build — a system Firefox exits
+        # immediately. So we never point those at a system binary.
+        if executable_path is None and self._engine == "chromium":
+            executable_path = find_browser_binary(self._browser)
         self._executable_path = executable_path
         self._headless = headless
         self._playwright: Any = None
@@ -643,20 +699,26 @@ class DomDriver:
                 for stale in glob.glob(_TMP_PROFILE_GLOB):
                     shutil.rmtree(stale, ignore_errors=True)
             tmp_profile = self._prepare_tmp_profile()
-            factory = _async_playwright()
+            factory = _async_playwright(self._engine)
             try:
                 playwright = await factory().start()
                 kwargs: Dict[str, Any] = dict(
                     user_data_dir=tmp_profile,
                     headless=self._headless,
-                    args=_CHROME_FLAGS,
-                    ignore_default_args=["--enable-automation"],
                     ignore_https_errors=True,
                     no_viewport=True,
                 )
+                # Engine-specific setup: Chromium takes flags, Firefox takes
+                # prefs and rejects Chrome's flags outright.
+                if self._engine == "chromium":
+                    kwargs["args"] = _CHROME_FLAGS
+                    kwargs["ignore_default_args"] = ["--enable-automation"]
+                elif self._engine == "firefox":
+                    kwargs["firefox_user_prefs"] = _FIREFOX_PREFS
                 if self._executable_path:
                     kwargs["executable_path"] = self._executable_path
-                context = await playwright.chromium.launch_persistent_context(**kwargs)
+                engine = getattr(playwright, self._engine)
+                context = await engine.launch_persistent_context(**kwargs)
             except Exception:
                 shutil.rmtree(tmp_profile, ignore_errors=True)
                 raise
@@ -674,7 +736,7 @@ class DomDriver:
         happens on stop() for CDP-attached instances.
         """
         driver = cls()
-        factory = _async_playwright()
+        factory = _async_playwright('chromium')
         driver._playwright = await factory().start()
         try:
             browser = await driver._playwright.chromium.connect_over_cdp(

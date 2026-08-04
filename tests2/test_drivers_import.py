@@ -175,3 +175,51 @@ def test_pure_role_query_matches_role_only():
     els = [_el("OK", role="button"), _el("Story", role="article")]
     m = best_match(els, "the button")
     assert m is not None and m.role == "button"
+
+
+# -- browser selection -------------------------------------------------------
+
+def test_engine_derived_not_enumerated():
+    from orbit2.drivers.dom import engine_for
+    # Only three engines exist; everything not Firefox/WebKit is Chromium.
+    assert engine_for("firefox") == "firefox"
+    assert engine_for("safari") == "webkit"
+    for chromium_fork in ("chrome", "edge", "brave", "opera", "vivaldi", "arc", "whatever"):
+        assert engine_for(chromium_fork) == "chromium"
+    assert engine_for("") == "chromium"          # default
+    assert engine_for("FireFox") == "firefox"    # case-insensitive
+
+
+def test_binary_lookup_uses_path_not_hardcoded_locations(monkeypatch):
+    from orbit2.drivers import dom
+    seen = []
+
+    def fake_which(name):
+        seen.append(name)
+        return "/opt/bin/brave-browser" if name == "brave-browser" else None
+
+    monkeypatch.setattr("shutil.which", fake_which)
+    assert dom.find_browser_binary("brave") == "/opt/bin/brave-browser"
+    assert "brave" in seen and "brave-browser" in seen   # tried PATH variants
+    assert dom.find_browser_binary("nonexistent-browser") is None
+
+
+def test_chromium_prefers_system_binary_firefox_requires_bundled(monkeypatch):
+    from orbit2.drivers.dom import DomDriver
+
+    monkeypatch.setattr(
+        "orbit2.drivers.dom.find_browser_binary",
+        lambda b: f"/usr/bin/{b}",
+    )
+    # Chromium family: any installed build works (standard CDP).
+    assert DomDriver(browser="brave")._executable_path == "/usr/bin/brave"
+    # Firefox/WebKit are driven through a patched protocol — a system
+    # binary exits immediately, so we must use the driver's own build.
+    assert DomDriver(browser="firefox")._executable_path is None
+    assert DomDriver(browser="safari")._executable_path is None
+
+
+def test_explicit_executable_path_always_wins(monkeypatch):
+    from orbit2.drivers.dom import DomDriver
+    d = DomDriver(browser="firefox", executable_path="/custom/ff")
+    assert d._executable_path == "/custom/ff"
