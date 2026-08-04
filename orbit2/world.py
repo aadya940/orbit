@@ -107,11 +107,24 @@ class World:
         self._started.add(name)
 
     def _route_order(self) -> List[str]:
-        """Probe order: the surface we were last focused on first, then other
-        running drivers, then cold ones. Remembering focus keeps a later
-        verb on the app the previous verb switched to (a background browser
-        still 'sees' its page and would otherwise win)."""
-        order = [self.primary] if self.primary in self.drivers else []
+        """Probe order, most-authoritative first:
+
+        1. the surface owner (whoever opened what's in focus),
+        2. surface-agnostic rungs (vision) — they ground on the OWNER's
+           pixels, so a blind-but-alive surface escalates within itself,
+        3. other running drivers, then cold ones — only relevant when the
+           owned surface is genuinely gone.
+
+        Blind is not the same as wrong-surface: a canvas page the DOM can't
+        read must fall to vision, never to the a11y driver that happens to
+        'see' the browser's own chrome.
+        """
+        owner = self.surface_owner
+        order = [owner] if owner in self.drivers else []
+        order += [
+            n for n, d in self.drivers.items()
+            if getattr(d, "surface", "x") is None and n not in order
+        ]
         order += [n for n in self.drivers if n in self._started and n not in order]
         order += [n for n in self.drivers if n not in order]
         return order
@@ -120,12 +133,28 @@ class World:
         self.primary = name
         self._runtime["primary"] = name  # carry focus across verbs
 
+    @property
+    def surface_owner(self) -> str:
+        """Driver that owns the surface currently in focus (whoever opened
+        it). Perception may fall back to a surface-agnostic rung, but the
+        owner defines *which* surface we're looking at."""
+        return self._runtime.get("owner") or self.primary
+
+    def _set_owner(self, name: str) -> None:
+        self._runtime["owner"] = name
+
     async def _route(self) -> None:
         """Pick the perception driver that actually sees the focused surface.
         Probe running drivers first, cold ones only if none running can see,
         and commit to the first usable one."""
         scores: List[CapabilityScore] = []
         chosen: Optional[str] = None
+        # Bind surface-agnostic rungs to the owner BEFORE probing them, or
+        # vision would grab the whole screen instead of the owned surface.
+        owner_name = self.surface_owner
+        if owner_name in self.drivers:
+            await self._ensure_started(owner_name)
+            self._bind_surface_agnostic(self.drivers[owner_name])
         for name in self._route_order():
             try:
                 await self._ensure_started(name)
@@ -152,12 +181,35 @@ class World:
         excluded — it would act on a background window, not the focused one.
         Surface-agnostic drivers (keyboard/vision, surface=None) always ride
         along as last-resort rungs."""
-        prim = getattr(self.drivers[self.primary], "surface", None)
+        # Surface compatibility is defined by the OWNER, not by whichever
+        # driver happens to be perceiving (vision is surface-agnostic and
+        # would otherwise widen the ladder to unrelated surfaces).
+        owner_name = self.surface_owner if self.surface_owner in self.drivers else self.primary
+        owner = self.drivers[owner_name]
+        prim = getattr(owner, "surface", None)
         rest = [
             n for n in self.drivers if n != self.primary
             and getattr(self.drivers[n], "surface", None) in (None, prim)
         ]
         self.ladder_order = [self.primary] + rest
+        self._bind_surface_agnostic(owner)
+
+    def _bind_surface_agnostic(self, primary_driver: Driver) -> None:
+        """Point surface-agnostic rungs (vision) at the focused surface, so
+        they ground on its pixels and act in its coordinate space instead of
+        assuming an OS-global screen."""
+        for name in self.ladder_order:
+            driver = self.drivers[name]
+            if getattr(driver, "surface", "x") is not None or driver is primary_driver:
+                continue
+            if getattr(primary_driver, "surface", "x") is None:
+                continue  # never bind an agnostic rung to itself
+            capture = getattr(primary_driver, "screenshot", None)
+            if hasattr(driver, "set_capture") and capture is not None:
+                driver.set_capture(capture)
+            pointer_factory = getattr(primary_driver, "pointer", None)
+            if hasattr(driver, "set_pointer"):
+                driver.set_pointer(pointer_factory() if pointer_factory else None)
 
     def reroute(self) -> None:
         """Force re-selection of the perception driver on next observe."""
@@ -180,6 +232,7 @@ class World:
         # its now-background page and would wrongly win.) Only a genuine
         # blind (SurfaceUnreadable) triggers re-routing.
         if landed:
+            self._set_owner(target_name)   # this driver owns the new surface
             self._set_primary(target_name)
             self._rebuild_ladder()  # ladder now excludes the other surface
             self._routed = True

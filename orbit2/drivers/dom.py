@@ -819,6 +819,11 @@ class DomDriver:
         """This driver opens web targets (URLs / bare hosts)."""
         return is_web_target(target)
 
+    def pointer(self) -> "_PagePointer":
+        """Surface-local input, handed to the vision rung so grounded page
+        coordinates are clicked in page space (not OS-global screen space)."""
+        return _PagePointer(self)
+
     async def act(self, action: Action) -> Optional[Element]:
         page = await self._require_page()
 
@@ -1052,3 +1057,29 @@ class DomDriver:
             target=action.target,
             available=picked.get("available", []),
         )
+
+
+class _PagePointer:
+    """Page-space input adapter used by the vision rung on browser surfaces."""
+
+    def __init__(self, driver: "DomDriver") -> None:
+        self._driver = driver
+
+    async def click(self, x: float, y: float) -> None:
+        page = await self._driver._require_page()
+        await page.mouse.click(float(x), float(y))
+        await asyncio.sleep(0.15)
+
+    async def type(self, text: str) -> None:
+        page = await self._driver._require_page()
+        await page.keyboard.press("Control+a")
+        await page.keyboard.type(text)
+
+    async def press(self, chord: str) -> None:
+        page = await self._driver._require_page()
+        await page.keyboard.press(self._driver._normalize_chord(chord))
+
+    async def scroll(self, x: float, y: float, direction: str) -> None:
+        page = await self._driver._require_page()
+        await page.mouse.move(float(x), float(y))
+        await page.mouse.wheel(0, -400 if direction == "up" else 400)

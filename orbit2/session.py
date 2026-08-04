@@ -59,6 +59,11 @@ class Session:
     async def __aenter__(self) -> "Session":
         if self._drivers is None:
             self._drivers = _default_drivers()
+        # Vision grounds with the session's model unless it was given one.
+        for driver in self._drivers.values():
+            inject = getattr(driver, "set_llm", None)
+            if inject is not None:
+                inject(self.llm)
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
