@@ -115,10 +115,41 @@ async def test_navigate_then_route():
     assert obs.kind == "none"               # nothing open yet, no probe-launch
     await world.act(Action(kind=ActionKind.NAVIGATE, value="app:editor"))
     assert "tree" in world._started          # app launched via the tree driver
-    assert world._routed is False           # routing deferred to next observe
-    obs = await world.observe()
-    assert world._routed is True            # now routed against the real app
+    # The driver that opened the surface is trusted as primary (focus).
     assert world.primary == "tree"
+    assert world._routed is True
+    obs = await world.observe()
+    assert obs.elements                      # observes the launched app
+
+
+async def test_navigate_switches_primary_across_surfaces():
+    # Web driver is running and sees a page; launching a native app must
+    # switch primary to the app, not stick to the still-"visible" browser.
+    page = make_obs("Sign in", "Search", "Repositories")
+    app = make_obs("File", "Edit", "Untitled")
+    dom = FakeDriver([page, page], name="dom")
+    tree = FakeDriver([app, app], name="tree")
+
+    class _NavDom(FakeDriver):
+        @staticmethod
+        def can_navigate(t):
+            from orbit2.drivers.base import is_web_target
+            return is_web_target(t)
+
+    class _NavTree(FakeDriver):
+        @staticmethod
+        def can_navigate(t):
+            from orbit2.drivers.base import is_web_target
+            return bool(t) and not is_web_target(t)
+
+    world = World(drivers={
+        "dom": _NavDom([page, page], name="dom"),
+        "tree": _NavTree([app, app], name="tree"),
+    })
+    await world.act(Action(kind=ActionKind.NAVIGATE, value="https://github.com"))
+    assert world.primary == "dom"            # web navigate -> browser
+    await world.act(Action(kind=ActionKind.NAVIGATE, value="gnome-text-editor"))
+    assert world.primary == "tree"           # app navigate -> switches, not sticky
 
 
 def test_worlds_are_isolated():

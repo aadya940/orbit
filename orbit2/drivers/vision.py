@@ -19,6 +19,7 @@ class VisionDriver:
     """Planned grounding-model rung — currently a stub."""
 
     name = "vision"
+    surface = None  # grounds on the focused screen
 
     async def observe(self) -> Observation:
         raise SurfaceUnreadable(_NOT_IMPLEMENTED)

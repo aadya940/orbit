@@ -599,6 +599,7 @@ class DomDriver:
     """Driver over a Playwright/Patchright-managed Chromium page."""
 
     name = "dom"
+    surface = "web"
 
     def __init__(
         self,

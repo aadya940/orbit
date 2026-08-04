@@ -24,6 +24,7 @@ class KeyboardDriver:
     """Pure-keyboard action backend (pyautogui, lazily imported)."""
 
     name = "keyboard"
+    surface = None  # acts on the focused OS window
 
     @staticmethod
     def _pyautogui() -> Any:

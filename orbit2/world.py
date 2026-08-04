@@ -130,13 +130,25 @@ class World:
                 break  # first driver that sees the surface wins
         if chosen:
             self.primary = chosen
-        rest = [n for n in self.drivers if n != self.primary]
-        self.ladder_order = [self.primary] + rest
+        self._rebuild_ladder()
         self._routed = True
         self.journal.append(
-            "route", primary=self.primary,
+            "route", primary=self.primary, ladder=self.ladder_order,
             scores={s.driver: round(s.score, 3) for s in scores},
         )
+
+    def _rebuild_ladder(self) -> None:
+        """Ladder = primary first, then fallback rungs that can act on the
+        SAME surface. A driver bound to a different surface (dom vs tree) is
+        excluded — it would act on a background window, not the focused one.
+        Surface-agnostic drivers (keyboard/vision, surface=None) always ride
+        along as last-resort rungs."""
+        prim = getattr(self.drivers[self.primary], "surface", None)
+        rest = [
+            n for n in self.drivers if n != self.primary
+            and getattr(self.drivers[n], "surface", None) in (None, prim)
+        ]
+        self.ladder_order = [self.primary] + rest
 
     def reroute(self) -> None:
         """Force re-selection of the perception driver on next observe."""
@@ -148,13 +160,23 @@ class World:
         driver rather than pattern-matching the target string ourselves."""
         target_name = self._pick_navigator(action.value)
         await self._ensure_started(target_name)
-        self.primary = target_name
-        self._routed = False  # next observe re-confirms against the real surface
         try:
             await self.drivers[target_name].act(action)
             landed, note = True, ""
         except OrbitError as exc:
             landed, note = False, exc.message
+        # The driver that just opened the surface is the one now in focus —
+        # trust it as primary. (Capability probing alone can't tell focus:
+        # after switching web -> desktop, the browser driver still "sees"
+        # its now-background page and would wrongly win.) Only a genuine
+        # blind (SurfaceUnreadable) triggers re-routing.
+        if landed:
+            self.primary = target_name
+            self._rebuild_ladder()  # ladder now excludes the other surface
+            self._routed = True
+        else:
+            self.primary = target_name
+            self._routed = False
         self.journal.append(
             "action", kind_="navigate", target=action.value, value=action.value,
             landed=landed, strategy=target_name, attempts=1, diff="navigated",

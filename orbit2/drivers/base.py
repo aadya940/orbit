@@ -60,6 +60,13 @@ class Driver(Protocol):
     #: short id used in ActionResult.strategy and probe caches
     name: str
 
+    #: Which surface this driver acts on: "web" (dom), "native" (tree), or
+    #: None for surface-agnostic action fallbacks (keyboard/vision act on
+    #: whatever OS window is focused). A driver bound to one surface is
+    #: never a fallback rung for a different one — dom must not "help" a
+    #: native task by typing into a background browser page.
+    surface: Optional[str] = None
+
     async def observe(self) -> Observation:
         """Capture the focused surface. Raise SurfaceUnreadable if blind."""
         ...

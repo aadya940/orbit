@@ -310,6 +310,7 @@ class AccessibilityDriver:
     """Driver over the OS accessibility tree (OculOS daemon)."""
 
     name = "tree"
+    surface = "native"
 
     def __init__(
         self,
@@ -556,6 +557,13 @@ class AccessibilityDriver:
             self._scroll_fallback(action.value or "down")
             return None
 
+        if action.kind is ActionKind.FILL:
+            if action.value is None:
+                raise TargetNotFound("fill requires a value")
+            el = self._resolve_editable(action.target, pid)
+            self._type_into(el, pid, action)
+            return el
+
         if not action.target:
             raise TargetNotFound(f"{action.kind.value} requires a target description")
         el = self._resolve(action.target, pid)
@@ -570,11 +578,51 @@ class AccessibilityDriver:
             self._do_with_stale_retry(action, el, pid, lambda e: self.client.click(e))
             return el
 
-        if action.kind is ActionKind.FILL:
-            if action.value is None:
-                raise TargetNotFound("fill requires a value")
-            self._type_into(el, pid, action)
-            return el
+        raise TargetNotFound(f"unsupported action {action.kind.value}")
+
+    # Editable text roles across AT-SPI/UIA toolkits. The main editing
+    # widget of an app (a document, an entry, a terminal) is one of these
+    # and frequently has an empty accessible name.
+    _EDITABLE_ROLES = {
+        "text", "entry", "edit", "textbox", "text box", "document",
+        "document text", "document frame", "document web", "terminal",
+        "paragraph", "source view", "multi line text", "multiline text",
+    }
+
+    def _is_editable_text(self, el: Element) -> bool:
+        return el.role.lower() in self._EDITABLE_ROLES
+
+    def _resolve_editable(self, description: Optional[str], pid: int) -> Element:
+        """Resolve a fill target. Try the named description first, but fall
+        back to the editable text widget itself — a document/entry field
+        often has an empty accessible name, so requiring a name match makes
+        the one thing you obviously want to type into unhittable. Prefer the
+        focused editable, else the largest one."""
+        if description:
+            try:
+                return self._resolve(description, pid)
+            except TargetNotFound:
+                pass
+        try:
+            tree = self.client.get_tree(pid)
+        except Exception as exc:
+            raise SurfaceUnreadable(f"cannot fetch tree for pid {pid}: {exc}") from exc
+        elements: List[Element] = []
+        self._flatten(tree, pid, elements)
+        editable = [e for e in elements if self._is_editable_text(e) and e.enabled]
+        if not editable:
+            raise TargetNotFound(
+                f"no editable text field found in window {pid}"
+                + (f" for {description!r}" if description else ""),
+                target=description,
+            )
+
+        def area(e: Element) -> float:
+            b = e.bounds
+            return (b.width * b.height) if b else 0.0
+
+        editable.sort(key=lambda e: (e.focused, area(e)), reverse=True)
+        return editable[0]
 
         if action.kind is ActionKind.SELECT:
             if action.value is None:
